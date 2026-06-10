@@ -1,0 +1,679 @@
+\documentclass[12pt,a4paper]{ctexart}
+
+% ── 编码与字体 ──
+\usepackage{amsmath,amssymb}
+
+% ── 页面设置 ──
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{setspace}
+\onehalfspacing
+
+% ── 插图与表格 ──
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{booktabs}
+\usepackage{array}
+
+% ── 颜色与链接 ──
+\usepackage[colorlinks=true,linkcolor=blue,urlcolor=blue]{hyperref}
+
+% ── 代码高亮 ──
+\usepackage{listings}
+\usepackage{xcolor}
+
+\lstset{
+    language=C++,
+    basicstyle=\small\ttfamily,
+    backgroundcolor=\color{gray!5},
+    frame=single,
+    breaklines=true,
+    numbers=left,
+    numberstyle=\tiny,
+    keywordstyle=\color{blue},
+    commentstyle=\color{green!50!black},
+    stringstyle=\color{red!50!orange},
+    tabsize=4,
+    captionpos=b
+}
+
+% ── 针对 C# 的样式 ──
+\lstdefinestyle{csharp}{
+    language=[Sharp]C,
+    basicstyle=\small\ttfamily,
+    backgroundcolor=\color{gray!5},
+    frame=single,
+    breaklines=true,
+    numbers=left,
+    numberstyle=\tiny,
+    keywordstyle=\color{blue},
+    commentstyle=\color{green!50!black},
+    stringstyle=\color{red!50!orange},
+    tabsize=4,
+    captionpos=b
+}
+
+\title{\vspace{-2cm}桌面宠物 --- Unity 迁移方案设计文档}
+\author{}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\begin{abstract}
+本文档为桌面宠物项目从 GDI+ 原生方案迁移至 Unity 3D 引擎的技术方案设计。
+新方案将利用 Unity 引擎的 3D 渲染能力直接加载米哈游（崩坏：星穹铁道）的角色 3D 模型，
+结合透明窗口叠加技术实现桌面宠物效果。本文档涵盖项目目标、技术架构、实施路线和关键脚本设计，
+作为后续实际开发的指导文档。
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% ═══════════════════════════════════════════
+\section{项目概述}
+% ═══════════════════════════════════════════
+
+\subsection{项目背景}
+
+现有桌面宠物程序（\texttt{text1.c}）基于 Windows GDI+ 分层窗口技术，
+使用静态 PNG 图片的硬切换来模拟宠物动画。该方案存在以下局限：
+
+\begin{itemize}
+    \item 动画效果生硬：仅 9 张离散 PNG 整图切换，无过渡帧、无插值
+    \item 开发成本高：每新增一个动作状态都需要绘制新 PNG
+    \item 扩展性差：难以实现 Live2D 风格的参数化变形
+\end{itemize}
+
+本方案旨在将桌面宠物迁移至 Unity 引擎，利用 3D 模型渲染实现更流畅的动画效果，
+并为后续引入 Live2D 技术奠定基础。
+
+\subsection{项目目标}
+
+\begin{enumerate}
+    \item 搭建基于 Unity 的桌面宠物框架，支持透明窗口叠加在桌面上
+    \item 导入并渲染米哈游（崩坏：星穹铁道）角色 3D 模型（符玄）
+    \item 实现基础的桌面宠物交互功能：拖拽、点击反馈、空闲动画
+    \item 保留现有程序的 AI 聊天功能（通过进程间通信与 \texttt{text1.exe} 协作）
+    \item 为后续引入 Live2D Cubism SDK 预留接口
+\end{enumerate}
+
+\subsection{开发环境}
+
+\begin{itemize}
+    \item 引擎：Unity 2022.3.62t7 (LTS)
+    \item 语言：C\#（脚本）、HLSL（着色器）
+    \item 平台：Windows 10/11（Win64）
+    \item 关键技术：TransparentWindowManager、Windows API (user32.dll)
+    \item 源码管理：Git（仓库路径：\texttt{D:/Unity/projects/Desktop\_per\_pro}）
+\end{itemize}
+
+% ═══════════════════════════════════════════
+\section{新旧架构对比}
+% ═══════════════════════════════════════════
+
+\begin{table}[H]
+\centering
+\caption{GDI+ 方案 vs Unity 方案对比}
+\label{tab:compare}
+\begin{tabular}{lcc}
+\toprule
+\textbf{维度} & \textbf{旧方案 (GDI+)} & \textbf{新方案 (Unity)} \\
+\midrule
+渲染引擎 & GDI+ (CPU 渲染) & Unity (DirectX 11/12, GPU 渲染) \\
+模型格式 & PNG 整图 & FBX / AssetBundle (3D 网格) \\
+动画方式 & 整图硬切换 & 骨骼动画 + Blend Shape \\
+平滑度 & 无过渡（硬切） & 60fps 顶点插值 \\
+表情系统 & 无 & Blend Shape 参数化 \\
+光照 & 预绘制在 PNG 中 & 实时 PBR 光照 \\
+物理模拟 & 简单重力公式 & Unity Physics / 自定义 \\
+窗口透明 & UpdateLayeredWindow (GDI) & TransparentWindowManager \\
+鼠标交互 & 原生窗口消息 & Unity Input System \\
+模型复用 & 仅当前 9 张 PNG & 可导入任意 3D 模型 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ═══════════════════════════════════════════
+\section{技术架构}
+% ═══════════════════════════════════════════
+
+\subsection{整体架构}
+
+新系统采用双层架构：Unity 负责 3D 渲染和交互，旧程序作为后台服务提供聊天和托盘功能。
+
+\begin{figure}[H]
+\centering
+\begin{lstlisting}[frame=single,numbers=none,style=csharp]
+┌─────────────────────────────────────────────────┐
+│            Unity 窗口 (透明叠加层)                │
+│  ┌───────────────────────────────────────────┐  │
+│  │  Camera (Clear=SolidColor, BG=(0,0,0,0))  │  │
+│  │                                            │  │
+│  │  符玄 3D 模型                               │  │
+│  │  ├── 空闲动画 (Idle/Breath)                │  │
+│  │  ├── 点击反应 (Touch/Poke)                 │  │
+│  │  ├── 拖拽模式 (OnMouseDrag)                │  │
+│  │  ├── 行走模式 (Walk)                       │  │
+│  │  └── 表情切换 (BlendShape)                  │  │
+│  │                                            │  │
+│  │  交互层                                     │  │
+│  │  ├── 鼠标穿透区 (透明区域穿透点击)           │  │
+│  │  ├── 拖拽触发器 (点击模型拖动)               │  │
+│  │  └── 碰撞体 (Collider 检测点击)             │  │
+│  └───────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────┘
+                        │ 进程间通信 (UDP / 命名管道)
+                        ▼
+┌─────────────────────────────────────────────────┐
+│          text1.exe (后台服务进程)                 │
+│  ├── 系统托盘图标                                │
+│  ├── WebView2 AI 聊天窗口                       │
+│  ├── 设置窗口 (权重/颜色配置)                    │
+│  └── 托盘菜单 (退出/隐藏)                       │
+└─────────────────────────────────────────────────┘
+\end{lstlisting}
+\end{figure}
+
+\subsection{透明窗口实现}
+
+利用 \texttt{Unity\_TransparentWindowManager} 开源库\cite{TransparentWindow}实现。
+核心原理：
+
+\begin{enumerate}
+    \item 设置 Camera 的 ClearFlags 为 SolidColor，Background 为 (0,0,0,0)
+    \item 通过 Windows API \texttt{SetWindowLong} 设置 \texttt{WS\_EX\_LAYERED} 扩展样式
+    \item 调用 \texttt{SetLayeredWindowAttributes} 将颜色键 (0,0,0) 设为透明
+    \item 鼠标穿透：设置 \texttt{WS\_EX\_TRANSPARENT} 样式，让非模型区域点击穿透到桌面
+\end{enumerate}
+
+\subsection{模型渲染管线}
+
+\begin{enumerate}
+    \item 从社区获取符玄 FBX 模型（含骨骼和贴图）
+    \item 导入 Unity 作为 Model Prefab
+    \item 设置 Avatar 和 Animator Controller
+    \item 编写动画状态机：Idle $\leftrightarrow$ Walk $\leftrightarrow$ Touch $\leftrightarrow$ Fall
+    \item 通过 Blend Shape 控制面部表情
+\end{enumerate}
+
+\subsection{进程间通信（可选）}
+
+若保留旧程序的 AI 聊天功能，Unity 和 \texttt{text1.exe} 之间可通过以下方式通信：
+
+\begin{itemize}
+    \item \textbf{UDP 本地回环}：Unity 监听 127.0.0.1:xxxx，接收聊天命令
+    \item \textbf{命名管道 (Named Pipe)}：Windows 原生 IPC，更可靠
+    \item \textbf{共享文件}：最简单，但延迟较高
+\end{itemize}
+
+% ═══════════════════════════════════════════
+\section{关键脚本设计}
+% ═══════════════════════════════════════════
+
+\subsection{DesktopPet.cs --- 宠物主控}
+
+负责宠物状态管理、物理模拟和生命周期。
+
+\begin{lstlisting}[style=csharp,caption={DesktopPet.cs 骨架},label={lst:desktoppet}]
+using UnityEngine;
+
+public class DesktopPet : MonoBehaviour
+{
+    [Header("运动参数")]
+    public float gravity = 9.8f;        // 重力加速度
+    public float groundY = 0f;          // 地面 Y 坐标
+    public float moveSpeed = 2f;        // 行走速度
+    public float breathAmplitude = 0.02f; // 呼吸浮动幅度
+
+    // 宠物状态枚举
+    public enum PetState { Idle, Walking, Dragging, Falling, Landing }
+    public PetState currentState = PetState.Idle;
+
+    private Vector3 velocity;           // 当前速度
+    private Animator animator;
+    private bool isGrounded = false;
+
+    void Start()
+    {
+        animator = GetComponent<Animator>();
+    }
+
+    void Update()
+    {
+        switch (currentState)
+        {
+            case PetState.Idle:
+                UpdateIdle();
+                break;
+            case PetState.Falling:
+                UpdateFalling();
+                break;
+            case PetState.Walking:
+                UpdateWalking();
+                break;
+        }
+    }
+
+    void UpdateIdle()
+    {
+        // 呼吸浮动（正弦波动）
+        float breath = Mathf.Sin(Time.time * 2f) * breathAmplitude;
+        transform.localPosition += Vector3.up * breath * Time.deltaTime;
+    }
+
+    void UpdateFalling()
+    {
+        // 重力下落
+        velocity.y -= gravity * Time.deltaTime;
+        transform.position += velocity * Time.deltaTime;
+
+        // 落地检测
+        if (transform.position.y <= groundY)
+        {
+            Vector3 pos = transform.position;
+            pos.y = groundY;
+            transform.position = pos;
+            velocity.y = 0;
+            isGrounded = true;
+            SwitchState(PetState.Landing);
+            // 播放落地动画后切回 Idle
+        }
+    }
+
+    void UpdateWalking()
+    {
+        // 随机左右移动
+        // 到达边界时掉头或停止
+    }
+
+    public void SwitchState(PetState newState)
+    {
+        currentState = newState;
+        // 触发对应动画
+        if (animator != null)
+            animator.SetInteger("State", (int)newState);
+    }
+}
+\end{lstlisting}
+
+\subsection{DragHandler.cs --- 拖拽交互}
+
+处理鼠标拖拽宠物移动窗口的逻辑。
+
+\begin{lstlisting}[style=csharp,caption={DragHandler.cs 骨架},label={lst:drag}]
+using UnityEngine;
+
+public class DragHandler : MonoBehaviour
+{
+    [Header("拖拽参数")]
+    public float throwVelocityScale = 5f; // 抛掷力度缩放
+
+    private Vector3 dragOffset;
+    private Vector3 lastMousePos;
+    private Vector3 throwVelocity;
+
+    void OnMouseDown()
+    {
+        // 记录点击偏移
+        dragOffset = transform.position - GetMouseWorldPos();
+        lastMousePos = GetMouseWorldPos();
+
+        // 通知 DesktopPet 进入拖拽状态
+        GetComponent<DesktopPet>()?.SwitchState(DesktopPet.PetState.Dragging);
+    }
+
+    void OnMouseDrag()
+    {
+        Vector3 currentPos = GetMouseWorldPos();
+        // 计算抛掷速度
+        throwVelocity = (currentPos - lastMousePos) / Time.deltaTime;
+        lastMousePos = currentPos;
+
+        // 更新宠物位置
+        transform.position = currentPos + dragOffset;
+
+        // 同步更新 Unity 窗口位置（调用 Win32 API）
+        UpdateWindowPosition();
+    }
+
+    void OnMouseUp()
+    {
+        // 松开时赋予初速度
+        DesktopPet pet = GetComponent<DesktopPet>();
+        if (pet != null)
+        {
+            // 将鼠标速度转换为物体的初速度
+            // pet.SetVelocity(throwVelocity * throwVelocityScale);
+            pet.SwitchState(DesktopPet.PetState.Falling);
+        }
+    }
+
+    Vector3 GetMouseWorldPos()
+    {
+        Vector3 mousePos = Input.mousePosition;
+        mousePos.z = Camera.main.WorldToScreenPoint(transform.position).z;
+        return Camera.main.ScreenToWorldPoint(mousePos);
+    }
+
+    void UpdateWindowPosition()
+    {
+        // 通过 Win32 API SetWindowPos 移动 Unity 窗口
+        // 使宠物始终跟随鼠标
+    }
+}
+\end{lstlisting}
+
+\subsection{WindowOverlay.cs --- 透明窗口管理}
+
+封装 Windows API 实现透明叠加和鼠标穿透。
+
+\begin{lstlisting}[style=csharp,caption={WindowOverlay.cs 骨架},label={lst:window}]
+using UnityEngine;
+using System.Runtime.InteropServices;
+
+public class WindowOverlay : MonoBehaviour
+{
+    [DllImport("user32.dll")]
+    static extern int SetWindowLong(System.IntPtr hWnd, int nIndex, int dwNewLong);
+
+    [DllImport("user32.dll")]
+    static extern int GetWindowLong(System.IntPtr hWnd, int nIndex);
+
+    [DllImport("user32.dll")]
+    static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndInsertAfter,
+        int X, int Y, int cx, int cy, uint uFlags);
+
+    private const int GWL_EXSTYLE = -20;
+    private const int WS_EX_LAYERED = 0x80000;
+    private const int WS_EX_TRANSPARENT = 0x20;
+    private const int WS_EX_TOOLWINDOW = 0x80;
+
+    private static readonly System.IntPtr HWND_TOPMOST = new System.IntPtr(-1);
+    private const uint SWP_NOMOVE = 0x0002;
+    private const uint SWP_NOSIZE = 0x0001;
+    private const uint SWP_SHOWWINDOW = 0x0040;
+
+    [Header("窗口设置")]
+    public bool enableClickThrough = false; // 是否启用鼠标穿透
+
+    void Start()
+    {
+        // 获取 Unity 窗口句柄并设置扩展样式
+#if UNITY_STANDALONE_WIN
+        System.IntPtr hWnd = GetUnityWindowHandle();
+
+        // 设置分层 + 工具窗口（不在任务栏显示）
+        int exStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
+        exStyle |= WS_EX_LAYERED | WS_EX_TOOLWINDOW;
+        SetWindowLong(hWnd, GWL_EXSTYLE, exStyle);
+
+        // 强制置顶
+        SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+#endif
+    }
+
+    void Update()
+    {
+        // 定时重新置顶（防止被任务栏遮挡）
+        if (Time.frameCount % 300 == 0)
+        {
+            ForceTopmost();
+        }
+    }
+
+    public void SetClickThrough(bool enabled)
+    {
+#if UNITY_STANDALONE_WIN
+        System.IntPtr hWnd = GetUnityWindowHandle();
+        int exStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
+        if (enabled)
+            exStyle |= WS_EX_TRANSPARENT;   // 添加穿透
+        else
+            exStyle &= ~WS_EX_TRANSPARENT;  // 移除穿透
+        SetWindowLong(hWnd, GWL_EXSTYLE, exStyle);
+        enableClickThrough = enabled;
+#endif
+    }
+
+    void ForceTopmost()
+    {
+#if UNITY_STANDALONE_WIN
+        System.IntPtr hWnd = GetUnityWindowHandle();
+        SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE);
+#endif
+    }
+
+    System.IntPtr GetUnityWindowHandle()
+    {
+        // 通过 User32.dll 找到 Unity 窗口
+        return System.Diagnostics.Process.GetCurrentProcess().MainWindowHandle;
+    }
+}
+\end{lstlisting}
+
+\subsection{TouchController.cs --- 点击反馈}
+
+检测鼠标点击模型时的反馈逻辑。
+
+\begin{lstlisting}[style=csharp,caption={TouchController.cs 骨架},label={lst:touch}]
+using UnityEngine;
+
+public class TouchController : MonoBehaviour
+{
+    [Header("点击反馈")]
+    public float reactionDuration = 1.0f; // 反应持续时间
+
+    private DesktopPet pet;
+    private float reactionTimer = 0f;
+    private bool isReacting = false;
+
+    void Start()
+    {
+        pet = GetComponent<DesktopPet>();
+    }
+
+    void OnMouseDown()
+    {
+        if (!isReacting)
+        {
+            // 触发点击反应
+            isReacting = true;
+            reactionTimer = reactionDuration;
+            pet.SwitchState(DesktopPet.PetState.Idle);
+
+            // 随机播放一个反应动画
+            Animator anim = GetComponent<Animator>();
+            if (anim != null)
+                anim.SetTrigger("Touch");
+
+            // 可选：播放音效
+        }
+    }
+
+    void Update()
+    {
+        if (isReacting)
+        {
+            reactionTimer -= Time.deltaTime;
+            if (reactionTimer <= 0f)
+            {
+                isReacting = false;
+                // 恢复正常状态
+            }
+        }
+    }
+}
+\end{lstlisting}
+
+% ═══════════════════════════════════════════
+\section{实施路线}
+% ═══════════════════════════════════════════
+
+项目实施分为四个阶段，每阶段有明确的里程碑：
+
+\subsection{第一阶段：环境搭建（第 1 天）}
+
+\begin{itemize}
+    \item 在 Unity Hub 中创建新项目 \texttt{DesktopPerPro}
+    \item 导入 \texttt{TransparentWindowManager.unitypackage}
+    \item 配置 Camera 为透明背景
+    \item 验证：运行后 Unity 窗口透明叠加在桌面上
+    \item 初始化 Git 仓库，创建 \texttt{.gitignore}（Unity 模板）
+\end{itemize}
+
+\subsection{第二阶段：模型导入（第 2--3 天）}
+
+\begin{itemize}
+    \item 获取符玄 3D 模型（FBX/Unity AssetBundle）
+    \item 导入 Unity，配置贴图和材质
+    \item 建立 Animator Controller，设置基本动画状态
+    \item 搭建简单场景：将模型放置在透明背景中
+\end{itemize}
+
+\subsection{第三阶段：交互实现（第 4--6 天）}
+
+\begin{itemize}
+    \item 实现 \texttt{DesktopPet.cs}：状态机 + 物理
+    \item 实现 \texttt{DragHandler.cs}：拖拽 + 抛掷
+    \item 实现 \texttt{WindowOverlay.cs}：透明 + 置顶
+    \item 实现 \texttt{TouchController.cs}：点击反馈
+    \item 测试：宠物可在桌面自由拖拽、下落、行走
+\end{itemize}
+
+\subsection{第四阶段：集成与优化（第 7--10 天）}
+
+\begin{itemize}
+    \item 集成进程间通信（与旧 \texttt{text1.exe} 对话）
+    \item 添加窗口置顶轮询（防止被遮挡）
+    \item 性能优化（降低无关渲染开销）
+    \item 打包为独立 Windows 可执行文件
+\end{itemize}
+
+% ═══════════════════════════════════════════
+\section{模型获取方案}
+% ═══════════════════════════════════════════
+
+由于米哈游官方未直接公开角色模型文件，获取符玄 3D 模型有以下途径：
+
+\begin{enumerate}
+    \item \textbf{SR-Model-Importer}：社区开发的 Unity 工具，可从游戏资源包中提取角色模型
+    \item \textbf{hoyo-models 社区}：部分站点提供已导出的 FBX 格式
+    \item \textbf{VRM 社区模型}：有爱好者制作的 VRM 版本，可转换为 FBX
+    \item \textbf{替代方案}：先用 Unity Asset Store 的免费角色模型调试交互逻辑，
+          待模型到位后再替换
+\end{enumerate}
+
+\begin{quote}
+\small
+\textbf{注意}：以上途径获取的模型仅限个人学习和研究使用，请勿用于商业用途或公开发布。
+\end{quote}
+
+% ═══════════════════════════════════════════
+\section{Live2D 过渡预留}
+% ═══════════════════════════════════════════
+
+为将来迁移至 Live2D 技术，在本项目中预留以下扩展点：
+
+\begin{itemize}
+    \item \textbf{抽象渲染接口}：将宠物渲染抽象为接口 \texttt{IPetRenderer}，
+          当前实现为 3D 模型渲染，后续可替换为 Live2D Cubism SDK 渲染
+    \item \textbf{参数化系统}：当前使用 Unity Animator 的参数（Float/Trigger），
+          与 Live2D 的参数系统（ParamAngleX/ParamEyeLOpen 等）概念一致，
+          便于映射
+    \item \textbf{交互逻辑复用}：拖拽、点击、物理等交互逻辑与渲染方式解耦，
+          更换渲染引擎时无需重写交互代码
+\end{itemize}
+
+\begin{lstlisting}[style=csharp,caption={渲染接口抽象（预留）},label={lst:interface}]
+// 预留的渲染接口，方便后续替换为 Live2D
+public interface IPetRenderer
+{
+    void SetParameter(string name, float value);
+    void PlayAnimation(string animationName);
+    void SetExpression(string expressionName);
+    void SetMouthOpen(float value);    // 说话口型
+    void SetEyeOpen(float left, float right); // 眨眼
+}
+
+// Unity 3D 实现
+public class UnityModelRenderer : MonoBehaviour, IPetRenderer
+{
+    private Animator animator;
+    private SkinnedMeshRenderer meshRenderer;
+
+    public void SetParameter(string name, float value)
+    {
+        if (animator != null)
+            animator.SetFloat(name, value);
+    }
+
+    public void SetEyeOpen(float left, float right)
+    {
+        // 通过 Blend Shape 控制眼睛
+    }
+    // ... 其他接口实现
+}
+
+// 未来: Live2D 实现
+// public class Live2DRenderer : MonoBehaviour, IPetRenderer { ... }
+\end{lstlisting}
+
+% ═══════════════════════════════════════════
+\section{目录结构规划}
+% ═══════════════════════════════════════════
+
+\begin{verbatim}
+Desktop_per_pro/              # Git 仓库根目录
+  |-- README.md               # 项目说明
+  |-- report.pdf              # 本文档（可删除）
+  |-- report.tex              # 本文档源码（可删除）
+  |-- Assets/
+  |     |-- Scenes/
+  |     |     +-- Main.unity  # 主场景
+  |     |-- Scripts/
+  |     |     |-- DesktopPet.cs
+  |     |     |-- DragHandler.cs
+  |     |     |-- WindowOverlay.cs
+  |     |     |-- TouchController.cs
+  |     |     |-- IPetRenderer.cs     # 渲染接口
+  |     |     +-- UnityModelRenderer.cs
+  |     |-- Models/
+  |     |     +-- FuXuan/             # 符玄模型
+  |     |-- Materials/
+  |     |-- Animations/
+  |     |     +-- AnimatorController.controller
+  |     +-- Plugins/
+  |           +-- TransparentWindowManager/
+  |-- Packages/
+  |-- ProjectSettings/
+  +-- .gitignore
+\end{verbatim}
+
+% ═══════════════════════════════════════════
+\begin{thebibliography}{99}
+% ═══════════════════════════════════════════
+
+\bibitem{TransparentWindow}
+XJINE. \textit{Unity\_TransparentWindowManager --- Make Unity's window transparent and overlay on desktop}.
+\url{https://github.com/XJINE/Unity_TransparentWindowManager}, 2018. MIT License.
+
+\bibitem{HoyoModels}
+hoyo-models Community. \textit{Honkai: Star Rail 3D Character Models}.
+\url{https://hoyo-models.vercel.app/hsr}, 2025.
+
+\bibitem{SRImporter}
+lethern. \textit{SR-Model-Importer --- Honkai: Star Rail Model Importer for Unity}.
+\url{https://github.com/lethern/SR-Model-Importer}, 2025.
+
+\bibitem{PetOriginal}
+原桌面宠物项目. \textit{Desktop Pet --- GDI+ + WebView2 桌面宠物}.
+路径：\texttt{D:/C/Desktop pet/text1.c}, 2025.
+
+\end{thebibliography}
+
+\end{document}
