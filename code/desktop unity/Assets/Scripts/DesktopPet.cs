@@ -1,3 +1,4 @@
+using System.Threading;
 using UnityEngine;
 
 /// <summary>
@@ -16,20 +17,24 @@ using UnityEngine;
 /// </summary>
 public class DesktopPet : MonoBehaviour
 {
+    // 单例互斥锁：防止多个实例同时运行
+    private static Mutex _instanceMutex = null;
+    private const string MutexName = "DesktopPet_Unity_SingleInstance";
+
     #region 物理状态
 
     [Header("物理属性")]
     [Tooltip("宠物初始X位置")]
     public int startX = 50;
 
-    [Tooltip("宠物初始Y位置")]
-    public int startY = 25;
+    [Tooltip("宠物初始Y位置，-1=屏幕底部")]
+    public int startY = -1;
 
     [Tooltip("重力加速度（像素/帧²）")]
     public int gravity = 1;
 
     [Tooltip("最大下落速度（像素/帧）")]
-    public int maxFallSpeed = 15;
+    public int maxFallSpeed = 8;
 
     [Tooltip("水平速度范围")]
     public int maxHorizontalSpeed = 12;
@@ -54,9 +59,12 @@ public class DesktopPet : MonoBehaviour
     [System.NonSerialized]
     public bool isPaused = false;
 
-    // 屏幕尺寸缓存
-    private int _screenWidth;
-    private int _screenHeight;
+    [System.NonSerialized]
+    public bool isDragging = false;
+
+    // 屏幕尺寸（动态获取，不缓存）
+    private int _screenWidth => Screen.width;
+    private int _screenHeight => Screen.height;
 
     #endregion
 
@@ -77,21 +85,21 @@ public class DesktopPet : MonoBehaviour
 
     [Header("地面任务配置")]
     [Tooltip("向左走到边缘权重")]
-    public int taskWeightMoveLeftEdge = 3;
+    public int taskWeightMoveLeftEdge = 0;
     [Tooltip("向右走到边缘权重")]
-    public int taskWeightMoveRightEdge = 3;
+    public int taskWeightMoveRightEdge = 0;
     [Tooltip("向左走定时权重")]
-    public int taskWeightMoveLeftTime = 20;
+    public int taskWeightMoveLeftTime = 0;
     [Tooltip("向右走定时权重")]
-    public int taskWeightMoveRightTime = 20;
+    public int taskWeightMoveRightTime = 0;
     [Tooltip("停止定时权重")]
-    public int taskWeightStopTime = 10;
+    public int taskWeightStopTime = 1;
 
     [Tooltip("地面任务移动持续时间（毫秒）")]
     public int taskMoveTimeMs = 5000;
 
     [Tooltip("停止持续时间（毫秒）")]
-    public int taskStopTimeMs = 1500;
+    public int taskStopTimeMs = 30000;
 
     [System.NonSerialized]
     public GroundTask currentTask = GroundTask.None;
@@ -106,36 +114,95 @@ public class DesktopPet : MonoBehaviour
     #region 组件引用
 
     private WindowOverlay _windowOverlay;
-    private DragHandler _dragHandler;
+    private IPetRenderer _renderer;
 
     #endregion
 
     #region Unity 生命周期
 
+    private void Awake()
+    {
+        // ---- 单例互斥锁：防止 Build and Run 产生多个实例 ----
+        try
+        {
+            bool createdNew;
+            _instanceMutex = new Mutex(true, MutexName, out createdNew);
+            if (!createdNew)
+            {
+                Debug.LogWarning("[DesktopPet] 检测到已有实例在运行，立即退出当前实例");
+
+                // 在构建版中，立即终止进程（不等帧结束）
+                if (!Application.isEditor)
+                {
+                    System.Environment.Exit(0);
+                }
+#if UNITY_EDITOR
+                UnityEditor.EditorApplication.isPlaying = false;
+#endif
+                return; // 安全保底
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogWarning($"[DesktopPet] 互斥锁创建失败（通常无害）: {ex.Message}");
+        }
+
+        // 防重复：如果已经有一个 DesktopPet 了，这个自毁
+        DesktopPet[] all = FindObjectsOfType<DesktopPet>();
+        if (all.Length > 1)
+        {
+            Debug.LogWarning("[DesktopPet] 检测到多个实例，自毁中");
+            Destroy(gameObject);
+            return;
+        }
+    }
+
     private void Start()
     {
-        // 获取屏幕尺寸
-        _screenWidth = Screen.width;
-        _screenHeight = Screen.height;
+        // ---- 限制帧率：降低 CPU/GPU 占用 ----
+#if !UNITY_EDITOR
+        Application.targetFrameRate = 60;
+        QualitySettings.vSyncCount = 0;
+        Debug.Log($"[DesktopPet] 帧率限制: {Application.targetFrameRate}fps");
+#endif
 
         // 初始化物理状态
         petX = startX;
-        petY = startY;
+        petY = startY >= 0 ? startY : (_screenHeight - petHeight - 10); // 底部留 10px 边距
         petVx = 0;
         petVy = 0;
-        petWidth = 128;   // 默认尺寸，后续由 Sprite 覆盖
-        petHeight = 128;
+        petWidth = 100;   // 图片宽 453px，按比例缩小
+        petHeight = 170;  // 453:768 ≈ 100:170，保持原比例
 
-        // 查找依赖组件
+        // 自动确保 WindowOverlay 存在
         _windowOverlay = GetComponent<WindowOverlay>();
-        _dragHandler = GetComponent<DragHandler>();
-
         if (_windowOverlay == null)
         {
-            Debug.LogWarning("[DesktopPet] 未找到 WindowOverlay 组件");
+            _windowOverlay = gameObject.AddComponent<WindowOverlay>();
+            Debug.Log("[DesktopPet] 自动添加了 WindowOverlay 组件");
         }
 
-        Debug.Log($"[DesktopPet] 初始化完成 @ ({petX},{petY}), 屏幕: {_screenWidth}x{_screenHeight}");
+        // 自动确保 DragHandler 存在
+        if (GetComponent<DragHandler>() == null)
+        {
+            gameObject.AddComponent<DragHandler>();
+            Debug.Log("[DesktopPet] 自动添加了 DragHandler 组件");
+        }
+
+        // 获取渲染器引用：使用 Live2DRenderer
+        var live2d = GetComponent<Live2DRenderer>();
+        if (live2d != null)
+        {
+            _renderer = live2d;
+            Debug.Log("[DesktopPet] 使用 Live2DRenderer");
+        }
+        else
+        {
+            Debug.LogError("[DesktopPet] 场景中未找到 Live2DRenderer 组件，请添加");
+            enabled = false;
+        }
+
+        Debug.Log($"[DesktopPet] 初始化完成 @ ({petX},{petY}), 屏幕: {Screen.width}x{Screen.height}");
     }
 
     private void Update()
@@ -143,6 +210,17 @@ public class DesktopPet : MonoBehaviour
         // 暂停时不更新物理
         if (isPaused)
             return;
+
+        // ========== v1 行为：拖拽时完全冻结物理 ==========
+        if (isDragging)
+            return;
+
+        // 通知渲染器更新状态
+        if (_renderer != null)
+        {
+            _renderer.OnPetUpdate(petX, petY, petWidth, petHeight,
+                petVx, petVy, onGround, isDragging, isPaused);
+        }
 
         // 物理步进
         StepPet();
@@ -238,7 +316,10 @@ public class DesktopPet : MonoBehaviour
     private void OnLand()
     {
         Debug.Log("[DesktopPet] 落地");
-        // 后续扩展：播放落地动画/音效
+
+        // 通知渲染器显示落地姿势
+        if (_renderer != null)
+            _renderer.ShowLandPose();
 
         // 落地后开始地面任务
         StartNextGroundTask();
@@ -265,7 +346,7 @@ public class DesktopPet : MonoBehaviour
         if (!allowStop) w5 = 0;
 
         int total = w1 + w2 + w3 + w4 + w5;
-        if (total <= 0) return GroundTask.MoveLeftEdge;
+        if (total <= 0) return GroundTask.StopTime;
 
         int r = Random.Range(0, total);
         if (r < w1) return GroundTask.MoveLeftEdge;
@@ -307,26 +388,20 @@ public class DesktopPet : MonoBehaviour
         lastTask = task;
         _taskEndTime = 0f;
 
-        int speed = Random.Range(1, 4); // 1~3
+        // 暂时所有任务都不平动，只看动画
+        petVx = 0;
 
         switch (task)
         {
             case GroundTask.MoveLeftEdge:
-                petVx = -speed;
-                break;
             case GroundTask.MoveRightEdge:
-                petVx = speed;
-                break;
             case GroundTask.MoveLeftTime:
-                petVx = -speed;
-                _taskEndTime = Time.time + taskMoveTimeMs / 1000f;
-                break;
             case GroundTask.MoveRightTime:
-                petVx = speed;
+                if (_renderer != null) _renderer.ShowWalkPose();
                 _taskEndTime = Time.time + taskMoveTimeMs / 1000f;
                 break;
             case GroundTask.StopTime:
-                petVx = 0;
+                if (_renderer != null) _renderer.ShowStopPose(taskStopTimeMs / 1000f);
                 _taskEndTime = Time.time + taskStopTimeMs / 1000f;
                 break;
         }
@@ -381,17 +456,33 @@ public class DesktopPet : MonoBehaviour
 
     #endregion
 
+    // Live2DRenderer 负责所有渲染，无需 OnGUI
+
+    private void OnDestroy()
+    {
+        // 释放互斥锁
+        if (_instanceMutex != null)
+        {
+            try { _instanceMutex.ReleaseMutex(); } catch { }
+            try { _instanceMutex.Dispose(); } catch { }
+            _instanceMutex = null;
+        }
+    }
+
     #region 交互接口
 
     /// <summary>
-    /// 从拖拽释放设置初速度
+    /// 从拖拽释放设置初速度（v1 行为：保证向下速度）
     /// </summary>
     public void ApplyDragVelocity(int vx, int vy)
     {
+        // v1 行为：释放后如果 vy <= 0，强制设 vy = 2 保证下落
+        if (vy <= 0) vy = 2;
         petVx = Mathf.Clamp(vx, -maxHorizontalSpeed, maxHorizontalSpeed);
         petVy = Mathf.Clamp(vy, -maxFallSpeed, maxFallSpeed);
         onGround = false;
         currentTask = GroundTask.None;
+        Debug.Log($"[DesktopPet] 拖拽释放: vx={petVx}, vy={petVy}");
     }
 
     /// <summary>

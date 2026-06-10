@@ -1,29 +1,44 @@
-# ========== Unity ==========
-[Ll]ibrary/
-[Tt]emp/
-[Oo]bj/
-[Bb]uild/
-[Bb]uilds/
-[Ll]ogs/
-[Uu]ser[Ss]ettings/
+# ================
+# Unity 项目
+# ================
+code/desktop unity/[Ll]ibrary/
+code/desktop unity/[Tt]emp/
+code/desktop unity/[Oo]bj/
+code/desktop unity/[Bb]uild/
+code/desktop unity/[Bb]uilds/
+code/desktop unity/[Ll]ogs/
+code/desktop unity/[Uu]ser[Ss]ettings/
+code/desktop unity/*.csproj
+code/desktop unity/*.sln
+code/desktop unity/*.user
+code/desktop unity/*.userprefs
+code/desktop unity/*.unityproj
+code/desktop unity/*.pidb
+code/desktop unity/*.booproj
+code/desktop unity/*.svd
 
-# ========== IDE ==========
-.vs/
-.vscode/
-*.csproj
-*.sln
-*.user
-*.userprefs
+# ================
+# 原始模型文件（超大，不上传）
+# ================
+file/
 
-# ========== OS ==========
+# ================
+# macOS
+# ================
 .DS_Store
-Thumbs.db
 
-# ========== LaTeX ==========
-*.aux
+# ================
+# Visual Studio / Rider / IDE
+# ================
+code/desktop unity/.vs/
+code/desktop unity/.idea/
+code/desktop unity/*.suo
+code/desktop unity/*.sdf
+code/desktop unity/*.opensdf
+code/desktop unity/*.VC.db
+code/desktop unity/*.VC.opendb
+
+# ================
+# 日志
+# ================
 *.log
-*.out
-*.toc
-*.synctex.gz
-*.fls
-*.fdb_latexmk
