@@ -13,11 +13,20 @@
 \contentsline {subsection}{\numberline {4.2}DragHandler.cs --- 拖拽交互}{8}{subsection.4.2}%
 \contentsline {subsection}{\numberline {4.3}WindowOverlay.cs --- 透明窗口管理}{10}{subsection.4.3}%
 \contentsline {subsection}{\numberline {4.4}TouchController.cs --- 点击反馈}{12}{subsection.4.4}%
-\contentsline {section}{\numberline {5}实施路线}{13}{section.5}%
-\contentsline {subsection}{\numberline {5.1}第一阶段：环境搭建（第 1 天）}{13}{subsection.5.1}%
-\contentsline {subsection}{\numberline {5.2}第二阶段：模型导入（第 2--3 天）}{14}{subsection.5.2}%
-\contentsline {subsection}{\numberline {5.3}第三阶段：交互实现（第 4--6 天）}{14}{subsection.5.3}%
-\contentsline {subsection}{\numberline {5.4}第四阶段：集成与优化（第 7--10 天）}{14}{subsection.5.4}%
-\contentsline {section}{\numberline {6}模型获取方案}{14}{section.6}%
-\contentsline {section}{\numberline {7}Live2D 过渡预留}{15}{section.7}%
-\contentsline {section}{\numberline {8}目录结构规划}{16}{section.8}%
+\contentsline {section}{\numberline {5}行走动画设计原理}{13}{section.5}%
+\contentsline {subsection}{\numberline {5.1}核心哲学}{13}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}四大关键姿势}{14}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}垂直弹跳相位}{14}{subsection.5.3}%
+\contentsline {subsection}{\numberline {5.4}手臂与腿的交叉对位}{14}{subsection.5.4}%
+\contentsline {subsection}{\numberline {5.5}身体前倾与速度}{15}{subsection.5.5}%
+\contentsline {subsection}{\numberline {5.6}头部运动}{15}{subsection.5.6}%
+\contentsline {subsection}{\numberline {5.7}Live2D 参数映射}{15}{subsection.5.7}%
+\contentsline {subsection}{\numberline {5.8}常见错误}{16}{subsection.5.8}%
+\contentsline {section}{\numberline {6}实施路线}{16}{section.6}%
+\contentsline {subsection}{\numberline {6.1}第一阶段：环境搭建（第 1 天）}{17}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}第二阶段：模型导入（第 2--3 天）}{17}{subsection.6.2}%
+\contentsline {subsection}{\numberline {6.3}第三阶段：交互实现（第 4--6 天）}{17}{subsection.6.3}%
+\contentsline {subsection}{\numberline {6.4}第四阶段：集成与优化（第 7--10 天）}{17}{subsection.6.4}%
+\contentsline {section}{\numberline {7}模型获取方案}{18}{section.7}%
+\contentsline {section}{\numberline {8}Live2D 过渡预留}{18}{section.8}%
+\contentsline {section}{\numberline {9}目录结构规划}{19}{section.9}%

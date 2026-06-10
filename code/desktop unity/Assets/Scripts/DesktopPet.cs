@@ -21,6 +21,10 @@ public class DesktopPet : MonoBehaviour
     private static Mutex _instanceMutex = null;
     private const string MutexName = "DesktopPet_Unity_SingleInstance";
 
+    // ================ 可调参数（改这里）================
+    const int GROUND_Y_MARGIN     = -300;    // 地面距屏幕底部距离（像素），负数=往下调，正数=往上调
+    // ==================================================
+
     #region 物理状态
 
     [Header("物理属性")]
@@ -168,11 +172,19 @@ public class DesktopPet : MonoBehaviour
 
         // 初始化物理状态
         petX = startX;
-        petY = startY >= 0 ? startY : (_screenHeight - petHeight - 10); // 底部留 10px 边距
+        int groundFloor = _screenHeight + GROUND_Y_MARGIN;
+        petY = startY >= 0 ? startY : (groundFloor - petHeight);
         petVx = 0;
         petVy = 0;
-        petWidth = 100;   // 图片宽 453px，按比例缩小
-        petHeight = 170;  // 453:768 ≈ 100:170，保持原比例
+        petWidth = 100;
+        petHeight = 170;
+
+        // 强制落地检测
+        if (petY + petHeight >= groundFloor)
+        {
+            petY = groundFloor - petHeight;
+            onGround = true;
+        }
 
         // 自动确保 WindowOverlay 存在
         _windowOverlay = GetComponent<WindowOverlay>();
@@ -293,10 +305,11 @@ public class DesktopPet : MonoBehaviour
                 petVy = -petVy;
         }
 
-        // 5. 底部落地检测
-        if (petY + petHeight >= _screenHeight)
+        // 5. 底部落地检测（地面位置 = 屏幕底部 + GROUND_Y_MARGIN）
+        int groundFloor = _screenHeight + GROUND_Y_MARGIN;
+        if (petY + petHeight >= groundFloor)
         {
-            petY = _screenHeight - petHeight;
+            petY = groundFloor - petHeight;
             if (petVy > 0)
             {
                 petVy = 0;
@@ -330,33 +343,13 @@ public class DesktopPet : MonoBehaviour
     #region 地面状态机
 
     /// <summary>
-    /// 选择下一个地面任务（加权随机）
+    /// 选择下一个地面任务 — 测试模式：先左后右循环（Ping-Pong）
     /// </summary>
     private GroundTask PickNextGroundTask()
     {
-        int w1 = taskWeightMoveLeftEdge;
-        int w2 = taskWeightMoveRightEdge;
-        int w3 = taskWeightMoveLeftTime;
-        int w4 = taskWeightMoveRightTime;
-        int w5 = taskWeightStopTime;
-
-        // 停止只能在上次是定时移动后触发
-        bool allowStop = (lastTask == GroundTask.MoveLeftTime ||
-                          lastTask == GroundTask.MoveRightTime);
-        if (!allowStop) w5 = 0;
-
-        int total = w1 + w2 + w3 + w4 + w5;
-        if (total <= 0) return GroundTask.StopTime;
-
-        int r = Random.Range(0, total);
-        if (r < w1) return GroundTask.MoveLeftEdge;
-        r -= w1;
-        if (r < w2) return GroundTask.MoveRightEdge;
-        r -= w2;
-        if (r < w3) return GroundTask.MoveLeftTime;
-        r -= w3;
-        if (r < w4) return GroundTask.MoveRightTime;
-        return GroundTask.StopTime;
+        if (lastTask == GroundTask.MoveLeftTime)
+            return GroundTask.MoveRightTime;
+        return GroundTask.MoveLeftTime;
     }
 
     private GroundTask PickNextFromLeftEdge()
@@ -388,8 +381,20 @@ public class DesktopPet : MonoBehaviour
         lastTask = task;
         _taskEndTime = 0f;
 
-        // 暂时所有任务都不平动，只看动画
-        petVx = 0;
+        switch (task)
+        {
+            case GroundTask.MoveLeftEdge:
+            case GroundTask.MoveLeftTime:
+                petVx = -1;
+                break;
+            case GroundTask.MoveRightEdge:
+            case GroundTask.MoveRightTime:
+                petVx = 1;
+                break;
+            case GroundTask.StopTime:
+                petVx = 0;
+                break;
+        }
 
         switch (task)
         {

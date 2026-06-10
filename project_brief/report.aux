@@ -29,18 +29,35 @@
 \@writefile{toc}{\contentsline {subsection}{\numberline {4.4}TouchController.cs --- 点击反馈}{12}{subsection.4.4}\protected@file@percent }
 \newlabel{lst:touch}{{4}{12}{TouchController.cs 骨架}{lstlisting.4}{}}
 \@writefile{lol}{\contentsline {lstlisting}{\numberline {4}{\ignorespaces TouchController.cs 骨架}}{12}{lstlisting.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {5}实施路线}{13}{section.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}第一阶段：环境搭建（第 1 天）}{13}{subsection.5.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}第二阶段：模型导入（第 2--3 天）}{14}{subsection.5.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}第三阶段：交互实现（第 4--6 天）}{14}{subsection.5.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}第四阶段：集成与优化（第 7--10 天）}{14}{subsection.5.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {6}模型获取方案}{14}{section.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {7}Live2D 过渡预留}{15}{section.7}\protected@file@percent }
-\newlabel{lst:interface}{{5}{15}{渲染接口抽象（预留）}{lstlisting.5}{}}
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {5}{\ignorespaces 渲染接口抽象（预留）}}{15}{lstlisting.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}行走动画设计原理}{13}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}核心哲学}{13}{subsection.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}四大关键姿势}{14}{subsection.5.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces 行走循环四大关键姿势}}{14}{table.caption.4}\protected@file@percent }
+\newlabel{tab:walkcycle}{{2}{14}{行走循环四大关键姿势}{table.caption.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}垂直弹跳相位}{14}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}手臂与腿的交叉对位}{14}{subsection.5.4}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces 手臂-腿交替关系}}{15}{table.caption.5}\protected@file@percent }
+\newlabel{tab:armleg}{{3}{15}{手臂-腿交替关系}{table.caption.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}身体前倾与速度}{15}{subsection.5.5}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces 行走类型与前倾角度}}{15}{table.caption.6}\protected@file@percent }
+\newlabel{tab:lean}{{4}{15}{行走类型与前倾角度}{table.caption.6}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.6}头部运动}{15}{subsection.5.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.7}Live2D 参数映射}{15}{subsection.5.7}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces 行走动画 $\to $ Live2D 参数映射}}{16}{table.caption.7}\protected@file@percent }
+\newlabel{tab:mapping}{{5}{16}{行走动画 $\to $ Live2D 参数映射}{table.caption.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.8}常见错误}{16}{subsection.5.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}实施路线}{16}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}第一阶段：环境搭建（第 1 天）}{17}{subsection.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}第二阶段：模型导入（第 2--3 天）}{17}{subsection.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}第三阶段：交互实现（第 4--6 天）}{17}{subsection.6.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}第四阶段：集成与优化（第 7--10 天）}{17}{subsection.6.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}模型获取方案}{18}{section.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8}Live2D 过渡预留}{18}{section.8}\protected@file@percent }
+\newlabel{lst:interface}{{5}{18}{渲染接口抽象（预留）}{lstlisting.5}{}}
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {5}{\ignorespaces 渲染接口抽象（预留）}}{18}{lstlisting.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {9}目录结构规划}{19}{section.9}\protected@file@percent }
 \bibcite{TransparentWindow}{1}
 \bibcite{HoyoModels}{2}
 \bibcite{SRImporter}{3}
-\@writefile{toc}{\contentsline {section}{\numberline {8}目录结构规划}{16}{section.8}\protected@file@percent }
 \bibcite{PetOriginal}{4}
-\gdef \@abspage@last{17}
+\gdef \@abspage@last{20}

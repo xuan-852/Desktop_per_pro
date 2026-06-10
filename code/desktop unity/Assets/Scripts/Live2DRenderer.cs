@@ -15,19 +15,46 @@ using UnityEngine;
 public class Live2DRenderer : MonoBehaviour, IPetRenderer
 {
     // ================ 可调参数（改这里）================
-    const float BREATH_AMPLITUDE   = 0.5f;    // 呼吸幅度
-    const float BODY_SWAY_X        = 2.0f;  // 身体左右摆
-    const float BODY_SWAY_Y        = 0.5f;  // 身体上下晃
-    const float BODY_SWAY_Z        = 0.4f;  // 身体旋转
-    const float HEAD_X             = 0.6f;  // 头部左右
-    const float HEAD_Y             = 0.4f;  // 头部上下
-    const float EYE_X              = 3f;    // 眼珠左右
-    const float EYE_Y              = 2f;    // 眼珠上下
-    const float IDLE_TILT          = 8f;    // 歪头幅度
-    const float IDLE_SMILE         = 0.6f;  // 微笑幅度
-    const float IDLE_MOUTH         = 0.4f;  // 张嘴幅度
-    const float IDLE_BROW          = 6f;    // 眉毛幅度（动作2）
-    const float IDLE_BROW_Y        = 6f;    // 眉毛抬起幅度（动作3）
+    // -- 空闲待机 --
+    const float BREATH_AMPLITUDE   = 0.4f;    // 呼吸幅度
+    const float BODY_SWAY_X        = 10.0f;  // 身体左右摆
+    const float BODY_SWAY_Y        = 0.5f;   // 身体上下晃
+    const float BODY_SWAY_Z        = 0.4f;   // 身体旋转
+    const float HEAD_X             = 0.6f;   // 头部左右
+    const float HEAD_Y             = 0.4f;   // 头部上下
+    const float EYE_X              = 3f;     // 眼珠左右
+    const float EYE_Y              = 2f;     // 眼珠上下
+    const float IDLE_TILT          = 8f;     // 歪头幅度
+    const float IDLE_SMILE         = 0.6f;   // 微笑幅度
+    const float IDLE_MOUTH         = 0.4f;   // 张嘴幅度
+    const float IDLE_BROW          = 6f;     // 眉毛幅度（动作2）
+    const float IDLE_BROW_Y        = 6f;     // 眉毛抬起幅度（动作3）
+
+    // -- 走路（侧面视角）--
+    // 模型转体侧面，腿/手臂摆动可见
+    // bodyAngleY符号由方向决定（翻转后视觉一致）
+    const float WALK_SIDE_ANGLE    = 18f;    // 身体Y轴转体幅度（方向自动匹配）
+    const float WALK_SWAY_FREQ     = 5f;     // 步频
+    const float WALK_BOUNCE_PX    = 4f;     // 上下颠簸(像素)
+    const float WALK_BODY_LEAN    = 5f;     // 身体前倾
+    const float WALK_HEAD_TILT    = 12f;    // 头微低看路（正数=低头）
+    const float WALK_LEG_LIFT     = 4f;     // 抬腿幅度 (Param165)
+    const float WALK_LEG_SWING    = 6f;     // 腿前后摆幅 (Param126/129 位移)
+    const float WALK_LEG_BEND     = 6f;     // 腿弯曲幅度 (Param127/131 透视)
+    const float WALK_ARM_SWING    = 4f;     // 手臂摆动 (Param94)
+    const float WALK_BODY_SWING   = 2f;     // 身体Z轴横摆(驱动衣服飘动, ParamBodyAngleZ)
+    const float WALK_SHOULDER     = 1.5f;     // 耸肩 (Param153)
+    const float WALK_BREATH       = 3f;     // 呼吸恒定加深（给物理持续输入）
+
+    // -- 下落 --
+    const float FALL_BODY_ANGLE_X  = -3f;    // 下落身体前倾
+    const float FALL_HEAD_ANGLE_X  = -5f;    // 下落头部角度
+
+    // -- 点击 --
+    const float CLICK_BODY_ANGLE_X = -5f;    // 点击身体角度
+    const float CLICK_HEAD_ANGLE_X = 8f;     // 点击头部角度
+    const float CLICK_EYE_OPEN     = 0.3f;   // 点击眯眼
+    const float CLICK_LOCK_TIME    = 1.0f;   // 点击姿势锁定秒数
     // ==================================================
     [Header("模型 Prefab")]
     [Tooltip("Cubism SDK 导入后生成的模型 Prefab（拖拽到这里）")]
@@ -38,7 +65,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     public float modelScale = 200f;
 
     [Tooltip("模型垂直偏移（像素）")]
-    public float verticalOffset = 50f;
+    public float verticalOffset = 250f;
 
     // Cubism 组件
     private GameObject _modelRoot;
@@ -72,6 +99,12 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
     // 是否已加载
     private bool _loaded = false;
+
+    // 走路颠簸当前偏移量（像素）
+    private float _walkBounceOffset = 0f;
+
+    // 走路相位
+    private float _walkPhase = 0f;
 
     private void Start()
     {
@@ -119,6 +152,21 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     {
         if (!_loaded || _cubismModel == null) return;
 
+        // 累积走路相位并计算垂直颠簸偏移
+        if (_pet != null && _pet.onGround && _pet.petVx != 0)
+        {
+            _walkPhase += Time.deltaTime * WALK_SWAY_FREQ;
+            // 限制范围防精度损失（≈1个完整周期）
+            if (_walkPhase > Mathf.PI * 2f) _walkPhase -= Mathf.PI * 2f;
+            // ★ 颠簸（1 - abs(sin) = 腿并拢时最高，迈步时最低）
+            _walkBounceOffset = (1f - Mathf.Abs(Mathf.Sin(_walkPhase))) * WALK_BOUNCE_PX;
+        }
+        else
+        {
+            _walkBounceOffset = 0f;
+            _walkPhase = 0f;
+        }
+
         UpdateModelPosition();
     }
 
@@ -132,7 +180,17 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         _breathPhase += Time.deltaTime * 2.0f;
 
         UpdateBlink();
-        UpdateIdleAnimation();
+
+        // ★ 走路/空闲统一在 LateUpdate 中设置参数
+        // 此时 _walkPhase 已在 Update() 中更新完毕，相位准确
+        if (_pet != null && _pet.onGround && _pet.petVx != 0)
+        {
+            UpdateWalkAnimation();
+        }
+        else
+        {
+            UpdateIdleAnimation();
+        }
     }
 
     /// <summary>
@@ -226,7 +284,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
         // 屏幕坐标 (左上原点, Y向下) → Unity 世界坐标
         float worldX = _pet.petX + _pet.petWidth / 2f;
-        float worldY = _pet.petY + _pet.petHeight / 2f + verticalOffset;
+        float worldY = _pet.petY + _pet.petHeight / 2f + verticalOffset - _walkBounceOffset;
 
         Vector3 screenPos = new Vector3(worldX, Screen.height - worldY, 10f);
         Vector3 worldPos = cam.ScreenToWorldPoint(screenPos);
@@ -272,6 +330,65 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         }
     }
 
+    /// <summary>
+    /// 走路动画 — LateUpdate 中调用，相位已同步
+    /// 
+    /// ★ 侧面走路（横版过关风格）
+    ///   用 ParamBodyAngleY 转体，观众能清楚看到抬腿和摆臂
+    ///   身体稳定（恒定转体+前倾），腿/臂交替运动产生走路信号
+    /// </summary>
+    private void UpdateWalkAnimation()
+    {
+        float phase = _walkPhase;
+
+        // ★ 身体转体侧面 — 使用正弦微摆而不是恒定值
+        //   微摆让身体有走路扭动感，同时驱动物理使衣服自然飘动
+        float bodyYaw = WALK_SIDE_ANGLE + Mathf.Sin(phase) * 3f;
+        SetParameter("ParamBodyAngleY", bodyYaw);
+
+        // 身体前倾（走路自然前倾）
+        SetParameter("ParamBodyAngleX", WALK_BODY_LEAN);
+
+        // ★ 身体左右横摆（ParamBodyAngleZ）驱动衣服飘动
+        //   走路时骨盆左右摆动，带动裙摆/袖子物理
+        float bodySwing = Mathf.Sin(phase) * WALK_BODY_SWING;
+        SetParameter("ParamBodyAngleZ", bodySwing);
+
+        // ★ 头低着看路，不要仰起
+        //   Cubism 正数=低头，加大幅度确保低头感
+        SetParameter("ParamAngleX", WALK_HEAD_TILT);
+
+        // ★ 脸转向侧面，和身体一致（侧脸）
+        SetParameter("ParamAngleY", WALK_SIDE_ANGLE);
+
+        // 呼吸加深（持续驱动物理，让衣服/头发飘动）
+        SetParameter("ParamBreath", WALK_BREATH + Mathf.Sin(phase) * 0.5f);
+
+        // ★ 左腿参数
+        //   左腿向前(+)时，右手臂也向前(+) — 交叉对位
+        float legPhase = Mathf.Sin(phase);
+        float rightPhase = -legPhase; // 右腿与左腿反相
+
+        // 抬腿
+        SetParameter("Param165", legPhase * WALK_LEG_LIFT);
+        SetParameter("Param164", rightPhase * WALK_LEG_LIFT);
+
+        // 前后摆动 + 弯曲
+        SetParameter("Param126", legPhase * WALK_LEG_SWING);
+        SetParameter("Param127", Mathf.Abs(legPhase) * WALK_LEG_BEND);
+
+        // 右腿
+        SetParameter("Param129", rightPhase * WALK_LEG_SWING);
+        SetParameter("Param131", Mathf.Abs(rightPhase) * WALK_LEG_BEND);
+
+        // ★ 右手臂与左腿同步（交叉对位：左腿前→右手前）
+        //   左臂被physics锁定无法直接控制，用右手体现交叉摆臂
+        SetParameter("Param94", legPhase * WALK_ARM_SWING);
+
+        // 肩膀配合脚步
+        SetParameter("Param153", Mathf.Abs(legPhase) * WALK_SHOULDER);
+    }
+
     private void SetParameter(string name, float value)
     {
         if (_cubismModel == null) return;
@@ -290,12 +407,12 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
     public void ShowClickPose()
     {
-        SetParameter("ParamEyeLOpen", 0.3f);
-        SetParameter("ParamEyeROpen", 0.3f);
-        SetParameter("ParamAngleX", 8f);
-        SetParameter("ParamBodyAngleX", -5f);
+        SetParameter("ParamEyeLOpen", CLICK_EYE_OPEN);
+        SetParameter("ParamEyeROpen", CLICK_EYE_OPEN);
+        SetParameter("ParamAngleX", CLICK_HEAD_ANGLE_X);
+        SetParameter("ParamBodyAngleX", CLICK_BODY_ANGLE_X);
         _poseLocked = true;
-        _poseLockUntil = Time.time + 1.0f;
+        _poseLockUntil = Time.time + CLICK_LOCK_TIME;
     }
 
     public void ShowLandPose()
@@ -331,24 +448,15 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
         if (!onGround && petVy > 0)
         {
-            // 下落 — 身体前倾（不调用站立时的UpdateBreath等）
-            SetParameter("ParamBodyAngleX", -3f);
-            SetParameter("ParamAngleX", -5f);
+            // 下落 — 身体前倾
+            SetParameter("ParamBodyAngleX", FALL_BODY_ANGLE_X);
+            SetParameter("ParamAngleX", FALL_HEAD_ANGLE_X);
             SetParameter("ParamBreath", 0f);
         }
         else if (onGround)
         {
-            if (petVx != 0)
-            {
-                // 行走 — 身体有节奏摆动 + 头发飘动感
-                float sway = Mathf.Sin(Time.time * 8f) * 2.5f;
-                float bob = Mathf.Sin(Time.time * 16f) * 1.0f;
-                SetParameter("ParamBodyAngleX", sway);
-                SetParameter("ParamAngleX", sway * 0.6f);
-                SetParameter("ParamBodyAngleY", bob);
-                SetParameter("ParamBreath", Mathf.Abs(Mathf.Sin(Time.time * 8f)) * 2f);
-            }
-            // 站立 — 完全交给 Update 中的 UpdateBreath/UpdateEyeMovement/UpdateIdleActions
+            // 走路参数统一在 LateUpdate 中设置（确保相位同步）
+            // 这里什么都不做，避免 Update 执行顺序问题
         }
     }
 

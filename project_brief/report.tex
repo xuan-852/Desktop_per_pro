@@ -511,6 +511,157 @@ public class TouchController : MonoBehaviour
 \end{lstlisting}
 
 % ═══════════════════════════════════════════
+\section{行走动画设计原理}
+% ═══════════════════════════════════════════
+
+\noindent
+\textbf{版本}：1.1 \\
+\textbf{更新内容}：补充 2D 侧面行走循环（Walk Cycle）动画理论，指导 Live2D 参数化走路动画的实现。
+
+\subsection{核心哲学}
+
+行走的本质是\textbf{「摔倒—接住自己」}的循环：
+重力不断将身体拉向地面，而双腿交替前伸，在身体即将倾倒的瞬间接住它。
+这一个循环中提炼出 4 个关键姿势（Key Poses），它们定义了行走的节奏和力学感。
+
+\subsection{四大关键姿势}
+
+\begin{table}[H]
+\centering
+\caption{行走循环四大关键姿势}
+\label{tab:walkcycle}
+\begin{tabular}{lp{3.5cm}p{6cm}c}
+\toprule
+\textbf{姿势} & \textbf{别名} & \textbf{描述} & \textbf{身体高度} \\
+\midrule
+Contact & 跨步位、Heel \& Toe & 一脚跟触地、一脚尖离地，\newline 身体处于「失重」瞬间 & 低 \\
+Down / Recoil & 下落位、重量转移 & 重心完全压在前脚，\newline 膝盖弯曲吸收冲击 & \textbf{最低} \\
+Passing & 过地位 & 承重腿在身体正下方，\newline 另一条腿经过其旁 & \textbf{最高} \\
+Up / High & 抬高位、升空位 & 后腿推离地面，\newline 前腿伸展准备落地 & 高 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{垂直弹跳相位}
+
+垂直弹跳是行走动画中\textbf{最重要}的视觉信号——没有它，行走就会变成「地面滑行」。
+
+\begin{itemize}
+    \item \textbf{最高点}：Passing（过地位）——小腿肌肉将身体推起
+    \item \textbf{最低点}：Down（下落位）——膝盖弯曲吸收冲击
+    \item \textbf{相位序列}：Contact(低)→Down(\textbf{最低})→Passing(\textbf{最高})→Up(高)→Contact(对侧)
+    \item \textbf{弹跳幅度}：自然行走约身高的 2--4\%，卡通可放大到 10--20 cm
+\end{itemize}
+
+数学表达：设步态相位 $\phi \in [0, 2\pi)$，则
+
+\begin{equation}
+    \text{BodyHeight}(\phi) = A \cdot \cos(\phi) + \text{BaseHeight}
+\end{equation}
+
+其中 $A$ 为弹跳幅度，$\phi=0$ 时（Passing 位）身体最高，$\phi=\pi$ 时（Down 位）身体最低。
+
+\subsection{手臂与腿的交叉对位}
+
+\textbf{核心法则}：一条腿向前时，\textbf{对侧}手臂向前（同侧手臂向后）。
+
+\begin{equation}
+    \text{Arm}_{\text{left}} = -\text{Leg}_{\text{right}} = +\text{Leg}_{\text{left}}
+\end{equation}
+
+\begin{table}[H]
+\centering
+\caption{手臂-腿交替关系}
+\label{tab:armleg}
+\begin{tabular}{cccc}
+\toprule
+\textbf{阶段} & \textbf{左腿} & \textbf{左臂} & \textbf{右臂} \\
+\midrule
+左腿在前 (Contact) & 前 & 后 & 前 \\
+左腿过地 (Passing) & 中 & 中 & 中 \\
+右腿在前 (Contact) & 后 & 前 & 后 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+这一模式来自骨盆与肩膀的\textbf{对向旋转}，是人体自然步态的生物学基础。
+
+\subsection{身体前倾与速度}
+
+\begin{table}[H]
+\centering
+\caption{行走类型与前倾角度}
+\label{tab:lean}
+\begin{tabular}{lc}
+\toprule
+\textbf{行走类型} & \textbf{前倾角度} \\
+\midrule
+休闲散步 & 3--7° \\
+正常步行 & 5--10° \\
+快走 & 10--20° \\
+奔跑 & 20--30°+ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+前倾角度与速度呈正比：速度越快，需要更大的前倾来产生水平方向的动量。
+
+\subsection{头部运动}
+
+\begin{itemize}
+    \item \textbf{随身体弹跳}：头上下的幅度约为身体弹跳的 50--70\%
+    \item \textbf{平滑补偿}：大脑为保持视野水平，会使头部轨迹比骨盆更平滑
+    \item \textbf{二次运动}：头部可做微小延迟跟随（跟随主运动后到达），增加生动感
+    \item \textbf{行进方向}：朝行走方向微倾，自然行走时约低头 3--5°
+\end{itemize}
+
+\subsection{Live2D 参数映射}
+
+结合符玄 Live2D 模型的实际可用参数，将行走循环映射如下：
+
+\begin{table}[H]
+\centering
+\caption{行走动画 $\to$ Live2D 参数映射}
+\label{tab:mapping}
+\begin{tabular}{llc}
+\toprule
+\textbf{动画要素} & \textbf{Live2D 参数} & \textbf{典型值} \\
+\midrule
+身体转体（侧面视角） & ParamBodyAngleY & 25°（恒定） \\
+身体前倾 & ParamBodyAngleX & 5°（恒定） \\
+脸转向侧面 & ParamAngleY & 25°（恒定） \\
+低头看路 & ParamAngleX & 5°（恒定） \\
+垂直颠簸 & 模型 Y 轴（像素偏移） & 6 px \\
+呼吸加深 & ParamBreath & 2.0（恒定偏大） \\
+\addlinespace
+\textbf{左腿参数} & & \\
+\quad 抬腿 & Param165 (抬腿) & $\pm$10° \\
+\quad 前后摆动 & Param126 (body X 腿 动画 位移) & $\pm$10° \\
+\quad 弯曲透视 & Param127 (body X 腿 动画 透视) & 0--8° \\
+\addlinespace
+\textbf{右腿参数} & & \\
+\quad 抬腿 & Param164 (腿) & $\pm$10°（反向） \\
+\quad 前后摆动 & Param129 (body X 腿 动画 R 位移) & $\pm$10°（反向） \\
+\quad 弯曲透视 & Param131 (body X 腿 动画R 透视) & 0--8°（反向） \\
+\addlinespace
+手臂摆动 & Param94 (右手上臂) & $\pm$6°（对侧） \\
+耸肩 & Param153 & 0--3° \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{常见错误}
+
+\begin{enumerate}
+    \item \textbf{身体高度无变化}（滑动步态 / Sliding）—— 最常见的错误，行走看起来像在地面滑行
+    \item \textbf{无重量转移} —— 重心始终在中间，缺乏脚踏实地感
+    \item \textbf{同手同脚} —— 混淆了交叉对位法则
+    \item \textbf{弹跳相位错误} —— 最高点和最低点位置搞反，导致颠簸节奏违和
+    \item \textbf{头部刚性跟随} —— 头应该比身体有轻微的延迟和独立运动
+    \item \textbf{速度与参数不协调} —— 步频、步幅、前倾角度之间应保持一致性
+\end{enumerate}
+
+% ═══════════════════════════════════════════
 \section{实施路线}
 % ═══════════════════════════════════════════
 
