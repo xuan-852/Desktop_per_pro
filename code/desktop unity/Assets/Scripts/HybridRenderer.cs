@@ -141,7 +141,7 @@ public class HybridRenderer : MonoBehaviour, IPetRenderer
     public void ShowDragPose() { RequestSwitch(false); live2DRenderer.ShowDragPose(); }
     public void ShowClickPose() { RequestSwitch(false); live2DRenderer.ShowClickPose(); }
     public void ShowLandPose() { RequestSwitch(false); live2DRenderer.ShowLandPose(); }
-    public void ShowWalkPose() { RequestSwitch(true); model3DRenderer.ShowWalkPose(); }
+    public void ShowWalkPose() { RequestSwitch(false); live2DRenderer.ShowWalkPose(); }
     public void ShowStopPose(float lockSeconds) { RequestSwitch(false); live2DRenderer.ShowStopPose(lockSeconds); }
 
     public void OnPetUpdate(int petX, int petY, int petWidth, int petHeight,
@@ -151,8 +151,9 @@ public class HybridRenderer : MonoBehaviour, IPetRenderer
 
         if (!isDragging)
         {
-            if (!onGround) RequestSwitch(true);
-            else if (Mathf.Abs(petVx) > 0) RequestSwitch(true);
+            // TODO: 接入 3D 模型后将 true 恢复
+            if (!onGround) RequestSwitch(false);
+            else if (Mathf.Abs(petVx) > 0) RequestSwitch(false);
             else RequestSwitch(false);
         }
 

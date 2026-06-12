@@ -23,6 +23,7 @@ public class DesktopPet : MonoBehaviour
 
     // ================ 可调参数（改这里）================
     const int GROUND_Y_MARGIN     = -300;    // 地面距屏幕底部距离（像素），负数=往下调，正数=往上调
+    const float WALK_SPEED_FACTOR = 0.5f;    // 移动速度系数（1=正常，0.5=一半）
     // ==================================================
 
     #region 物理状态
@@ -89,21 +90,27 @@ public class DesktopPet : MonoBehaviour
 
     [Header("地面任务配置")]
     [Tooltip("向左走到边缘权重")]
-    public int taskWeightMoveLeftEdge = 0;
+    public int taskWeightMoveLeftEdge = 1;
     [Tooltip("向右走到边缘权重")]
-    public int taskWeightMoveRightEdge = 0;
+    public int taskWeightMoveRightEdge = 1;
     [Tooltip("向左走定时权重")]
-    public int taskWeightMoveLeftTime = 0;
+    public int taskWeightMoveLeftTime = 1;
     [Tooltip("向右走定时权重")]
-    public int taskWeightMoveRightTime = 0;
+    public int taskWeightMoveRightTime = 1;
     [Tooltip("停止定时权重")]
-    public int taskWeightStopTime = 1;
+    public int taskWeightStopTime = 6;
 
-    [Tooltip("地面任务移动持续时间（毫秒）")]
-    public int taskMoveTimeMs = 5000;
+    [Tooltip("地面任务移动最短时间（毫秒）")]
+    public int taskMoveTimeMinMs = 2000;
 
-    [Tooltip("停止持续时间（毫秒）")]
-    public int taskStopTimeMs = 30000;
+    [Tooltip("地面任务移动最长时间（毫秒）")]
+    public int taskMoveTimeMaxMs = 4000;
+
+    [Tooltip("停止最短时间（毫秒）")]
+    public int taskStopTimeMinMs = 6000;
+
+    [Tooltip("停止最长时间（毫秒）")]
+    public int taskStopTimeMaxMs = 15000;
 
     [System.NonSerialized]
     public GroundTask currentTask = GroundTask.None;
@@ -265,13 +272,18 @@ public class DesktopPet : MonoBehaviour
 
     #region 物理步进
 
+    private float _walkSpeedAccum = 0f; // 速度系数累加器（小数部分）
+
     /// <summary>
     /// 物理步进：位置更新、重力、边界碰撞、落地检测
     /// </summary>
     private void StepPet()
     {
-        // 1. 应用速度
-        petX += petVx;
+        // 1. 应用速度（支持 WALK_SPEED_FACTOR）
+        _walkSpeedAccum += petVx * WALK_SPEED_FACTOR;
+        int deltaX = Mathf.RoundToInt(_walkSpeedAccum);
+        _walkSpeedAccum -= deltaX;
+        petX += deltaX;
         petY += petVy;
 
         // 2. 重力（空中时）
@@ -360,33 +372,61 @@ public class DesktopPet : MonoBehaviour
     #region 地面状态机
 
     /// <summary>
-    /// 选择下一个地面任务 — 测试模式：先左后右循环（Ping-Pong）
+    /// 选择下一个地面任务 — 用权重随机选取
     /// </summary>
     private GroundTask PickNextGroundTask()
     {
-        if (lastTask == GroundTask.MoveLeftTime)
-            return GroundTask.MoveRightTime;
-        return GroundTask.MoveLeftTime;
+        int wLeftEdge = taskWeightMoveLeftEdge;
+        int wRightEdge = taskWeightMoveRightEdge;
+        int wLeftTime = taskWeightMoveLeftTime;
+        int wRightTime = taskWeightMoveRightTime;
+        int wStop = taskWeightStopTime;
+
+        int total = wLeftEdge + wRightEdge + wLeftTime + wRightTime + wStop;
+        if (total <= 0) return GroundTask.StopTime; // 安全保底
+
+        int roll = Random.Range(0, total);
+
+        if (roll < wLeftEdge) return GroundTask.MoveLeftEdge;
+        roll -= wLeftEdge;
+
+        if (roll < wRightEdge) return GroundTask.MoveRightEdge;
+        roll -= wRightEdge;
+
+        if (roll < wLeftTime) return GroundTask.MoveLeftTime;
+        roll -= wLeftTime;
+
+        if (roll < wRightTime) return GroundTask.MoveRightTime;
+
+        return GroundTask.StopTime;
     }
 
     private GroundTask PickNextFromLeftEdge()
     {
         int wEdge = taskWeightMoveRightEdge;
         int wTime = taskWeightMoveRightTime;
-        int total = wEdge + wTime;
-        if (total <= 0) return GroundTask.MoveRightEdge;
-        return Random.Range(0, total) < wEdge ?
-            GroundTask.MoveRightEdge : GroundTask.MoveRightTime;
+        int wStop = taskWeightStopTime;
+        int total = wEdge + wTime + wStop;
+        if (total <= 0) return GroundTask.StopTime;
+        int roll = Random.Range(0, total);
+        if (roll < wEdge) return GroundTask.MoveRightEdge;
+        roll -= wEdge;
+        if (roll < wTime) return GroundTask.MoveRightTime;
+        return GroundTask.StopTime;
     }
 
     private GroundTask PickNextFromRightEdge()
     {
         int wEdge = taskWeightMoveLeftEdge;
         int wTime = taskWeightMoveLeftTime;
-        int total = wEdge + wTime;
-        if (total <= 0) return GroundTask.MoveLeftEdge;
-        return Random.Range(0, total) < wEdge ?
-            GroundTask.MoveLeftEdge : GroundTask.MoveLeftTime;
+        int wStop = taskWeightStopTime;
+        int total = wEdge + wTime + wStop;
+        if (total <= 0) return GroundTask.StopTime;
+        int roll = Random.Range(0, total);
+        if (roll < wEdge) return GroundTask.MoveLeftEdge;
+        roll -= wEdge;
+        if (roll < wTime) return GroundTask.MoveLeftTime;
+        return GroundTask.StopTime;
     }
 
     /// <summary>
@@ -420,11 +460,13 @@ public class DesktopPet : MonoBehaviour
             case GroundTask.MoveLeftTime:
             case GroundTask.MoveRightTime:
                 if (_renderer != null) _renderer.ShowWalkPose();
-                _taskEndTime = Time.time + taskMoveTimeMs / 1000f;
+                float moveDuration = Random.Range(taskMoveTimeMinMs, taskMoveTimeMaxMs + 1);
+                _taskEndTime = Time.time + moveDuration / 1000f;
                 break;
             case GroundTask.StopTime:
-                if (_renderer != null) _renderer.ShowStopPose(taskStopTimeMs / 1000f);
-                _taskEndTime = Time.time + taskStopTimeMs / 1000f;
+                if (_renderer != null) _renderer.ShowStopPose(0f); // 不锁定姿势，让空闲动作播放
+                float stopDuration = Random.Range(taskStopTimeMinMs, taskStopTimeMaxMs + 1);
+                _taskEndTime = Time.time + stopDuration / 1000f;
                 break;
         }
     }
