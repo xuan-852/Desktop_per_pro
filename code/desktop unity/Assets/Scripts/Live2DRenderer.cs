@@ -108,6 +108,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     const float WALK_SHOULDER     = 1.5f;   // 耸肩 (Param153)
     const float WALK_BREATH       = 3f;     // 呼吸恒定加深（给物理持续输入）
     const float IDLE_BLEND_DURATION = 0.4f;  // 走路→空闲混合消退时长
+    const float WALK_FADE_IN_DURATION = 0.3f; // 空闲→走路体态淡入时长
 
     // -- 下落 --
     const float FALL_BODY_ANGLE_X  = -3f;    // 下落身体前倾
@@ -163,6 +164,10 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     private float _noiseTimeX = 0f;
     private float _noiseTimeY = 0f;
 
+    // 强制动作锁定（右键菜单触发，播放期间不被走路覆盖）
+    private bool _actionLocked = false;
+    public event System.Action OnForcedActionFinished;
+
     // 是否已加载
     private bool _loaded = false;
 
@@ -177,6 +182,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
     // 走路→空闲混合消退计时
     private float _walkBlendRemaining = 0f;
+
+    // 空闲→走路体态淡入计时（动作结束后切走路不生硬）
+    private float _walkFadeInRemaining = 0f;
 
     private void Start()
     {
@@ -318,15 +326,16 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
         // ★ 走路/空闲统一在 LateUpdate 中设置参数
         // 此时 _walkPhase 已在 Update() 中更新完毕，相位准确
-        bool isWalking = (_pet != null && _pet.onGround && _pet.petVx != 0);
+        bool isWalking = (_pet != null && _pet.onGround && _pet.petVx != 0 && !_pet.isPaused && !_actionLocked);
 
         if (isWalking)
         {
             if (!_wasWalkingLastFrame)
             {
-                // 空闲→走路：立刻切，清表情残留
+                // 空闲→走路：清表情残留 + 开始体态淡入
                 ResetIdleAction();
                 _walkBlendRemaining = 0f;
+                _walkFadeInRemaining = WALK_FADE_IN_DURATION;
             }
             UpdateWalkAnimation();
         }
@@ -336,6 +345,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             {
                 // 走路→空闲：开始混合消退
                 _walkBlendRemaining = IDLE_BLEND_DURATION;
+                _walkFadeInRemaining = 0f; // 重置淡入（下次空闲→走路重新开始）
             }
 
             if (_walkBlendRemaining > 0f)
@@ -389,8 +399,11 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         // === 顺序测试动作（循环 1→2→3→4→5→6→7→8→9→10）===
         // 动作: 1=歪头, 2=微笑, 3=挑眉, 4=星辉, 5=伸懒腰, 6=爱心眼, 7=数钱, 8=委屈, 9=法阵, 10=害羞
 
+        // ★ 暂停时（菜单打开），不播新动作
+        bool isPaused = (_pet != null && _pet.isPaused);
+
         // 当前动作结束后，触发下一个
-        if (_currentIdleAction == 0)
+        if (_currentIdleAction == 0 && !isPaused)
         {
             _currentIdleAction = _nextIdleAction;
             _nextIdleAction++;
@@ -455,7 +468,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
     /// <summary>
     /// 动作4: 星辉环绕 ✨
-    /// 紫环旋转 + 星星闪烁 — 光效缓缓亮起再消退
+    /// 紫环旋转 + 星星闪烁 — 像法阵一样黑幕+发光
     /// </summary>
     private void UpdateStarSpin()
     {
@@ -466,18 +479,46 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         float t = Mathf.Clamp01(p / duration);
         float eased = Mathf.Sin(t * Mathf.PI); // 0→1→0 平滑
 
+        // ★ 黑幕背景（像法阵一样，让星辉发光更明显）
+        float darkIn = Mathf.Clamp01((p - 0f) / (duration * 0.15f));       // 快开
+        float darkOut = Mathf.Clamp01((duration - p) / (duration * 0.2f));  // 渐消
+        float dark = darkIn * darkOut;
+        SetParameter("Param121", Mathf.Clamp01(dark * 1.2f)); // 黑幕切换（略超1确保完全开启）
+        SetParameter("Param137", dark * 0.8f);                // 黑幕显示
+        SetParameter("Param132", dark * 0.8f);                // 眼镜发光
+
+        // ★ 环显隐 + 大小（必须设显隐环才会出现）
+        float ringVis = Mathf.Clamp01(eased * 1.3f); // 略超1让环更亮
+        SetParameter("Param431", ringVis);       // 外紫环显隐
+        SetParameter("Param911", ringVis);       // 中紫环显隐
+        SetParameter("Param741", ringVis);       // 内紫环显隐
+        SetParameter("Param441", eased * 1f);  // 外紫环大小
+        SetParameter("Param961", eased * 1f);  // 中紫环大小
+        SetParameter("Param731", eased * 1f);  // 内紫环大小
+
         // 三环旋转（内中外，不同速度）
-        SetParameter("Param421", Mathf.Sin(p * 2f) * eased * SPIN_RING_OUTER);    // 外紫环
-        SetParameter("Param902", Mathf.Sin(p * 2.7f) * eased * SPIN_RING_MID);   // 中紫环
-        SetParameter("Param882", Mathf.Sin(p * 3.5f) * eased * SPIN_RING_INNER); // 内紫环
+        SetParameter("Param421", Mathf.Sin(p * 2f) * eased * SPIN_RING_OUTER);    // 外紫环 转 (ParamGroup20)
+        SetParameter("Param422", Mathf.Sin(p * 2f) * eased * SPIN_RING_OUTER);    // 外紫环 转 (ParamGroup21)
+        SetParameter("Param901", Mathf.Sin(p * 2.7f) * eased * SPIN_RING_MID);   // 中紫环 转 (ParamGroup20)
+        SetParameter("Param902", Mathf.Sin(p * 2.7f) * eased * SPIN_RING_MID);   // 中紫环 转 (ParamGroup21)
+        SetParameter("Param881", Mathf.Sin(p * 3.5f) * eased * SPIN_RING_INNER); // 内紫环 转 (ParamGroup20)
+        SetParameter("Param882", Mathf.Sin(p * 3.5f) * eased * SPIN_RING_INNER); // 内紫环 转 (ParamGroup21)
+
+        // 蒙版加强（让环更亮更明显）
+        float maskBoost = Mathf.Clamp01(eased * 1.2f);
+        SetParameter("Param401", maskBoost * 0.8f); // 外蒙版
+        SetParameter("Param411", maskBoost * 0.7f); // 中蒙版
+        SetParameter("Param891", maskBoost * 0.7f); // 内蒙版
 
         // 星星显隐 + 大小（呼吸闪烁）
         float starPulse = (Mathf.Sin(p * 3f) + 1f) * 0.5f * eased;
-        SetParameter("Param451", starPulse);   // 星显隐
-        SetParameter("Param541", starPulse * 0.6f); // 星大小
+        SetParameter("Param451", starPulse * 1.2f);   // 星显隐（加强）
+        SetParameter("Param541", starPulse * 0.8f); // 星大小
 
-        // 全身微弱紫光氛围
-        SetParameter("Param401", eased * 0.3f); // 外蒙版
+        // 外围星
+        float outerStar = (Mathf.Sin(p * 2.3f) + 1f) * 0.5f * eased;
+        SetParameter("Param1071", outerStar * 0.6f); // 外围星变大
+        SetParameter("Param1081", outerStar * 0.8f); // 外星出现
 
         if (t >= 1f) ResetIdleAction();
     }
@@ -563,6 +604,12 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
         // 数钱表情（Param122 = 钱）
         SetParameter("Param122", eased);
+
+        // ★ 双眼放光（像法阵那样的眼镜发光效果）
+        float glow = Mathf.Clamp01(eased * 1.1f);
+        SetParameter("Param121", glow * 0.6f);  // 黑幕切换（半透明黑幕衬托发光）
+        SetParameter("Param137", glow * 0.4f);  // 黑幕显示
+        SetParameter("Param132", glow * 0.7f);  // 眼镜发光 ✨
 
         // 微笑（美滋滋）
         SetParameter("ParamEyeLSmile", eased * MONEY_SMILE);
@@ -756,6 +803,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     /// <summary>重置空闲动作，清理参数</summary>
     private void ResetIdleAction()
     {
+        bool wasLocked = _actionLocked;
+        _actionLocked = false;
+
         _currentIdleAction = 0;
         _idleActionTime = 0f;
         _complexActionPhase = 0f;
@@ -770,7 +820,24 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("ParamEyeLOpen", 1f);
         SetParameter("ParamEyeROpen", 1f);
         SetParameter("Param109", 0f); // 爱心眼
-        SetParameter("Param451", 0f); // 星星
+        SetParameter("Param451", 0f); // 星显隐
+        SetParameter("Param541", 0f); // 星大小
+        SetParameter("Param1071", 0f); // 外围星变大
+        SetParameter("Param1081", 0f); // 外星出现
+        SetParameter("Param411", 0f); // 中蒙版(星辉)
+        SetParameter("Param891", 0f); // 内蒙版(星辉)
+        SetParameter("Param431", 0f); // 外紫环显隐
+        SetParameter("Param911", 0f); // 中紫环显隐
+        SetParameter("Param741", 0f); // 内紫环显隐
+        SetParameter("Param441", 0f); // 外紫环大小
+        SetParameter("Param961", 0f); // 中紫环大小
+        SetParameter("Param731", 0f); // 内紫环大小
+        SetParameter("Param421", 0f); // 外紫环转(Group20)
+        SetParameter("Param422", 0f); // 外紫环转(Group21)
+        SetParameter("Param901", 0f); // 中紫环转(Group20)
+        SetParameter("Param902", 0f); // 中紫环转(Group21)
+        SetParameter("Param881", 0f); // 内紫环转(Group20)
+        SetParameter("Param882", 0f); // 内紫环转(Group21)
         SetParameter("Param92", 0f);  // 右手切换
         SetParameter("Param118", 0f); // 右手伸出
         SetParameter("Param401", 0f); // 外蒙版
@@ -793,9 +860,30 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("Param155", 0f); // 镜头X
         SetParameter("Param156", 0f); // 镜头Y
         SetParameter("Param157", 0f); // 人物缩小放大
+
+        if (wasLocked)
+        {
+            Debug.Log("[Live2DRenderer] 强制动作完成，触发回调");
+            OnForcedActionFinished?.Invoke();
+        }
     }
 
     #endregion
+
+    /// <summary>
+    /// 强制播放指定空闲动作（被右键菜单调用）
+    /// </summary>
+    public void ForceIdleAction(int actionId)
+    {
+        if (!_loaded || _cubismModel == null) return;
+        _actionLocked = true;
+        _currentIdleAction = actionId;
+        _nextIdleAction = actionId + 1;
+        if (_nextIdleAction > 10) _nextIdleAction = 1;
+        _idleActionTime = 0f;
+        _complexActionPhase = 0f;
+        Debug.Log($"[Live2DRenderer] ▶ 强制动作 #{actionId}（锁定，不被走路覆盖）");
+    }
 
     /// <summary>
     /// 将屏幕坐标转为世界坐标，定位模型
@@ -872,8 +960,17 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     {
         float phase = _walkPhase;
 
+        // ★ 空闲→走路淡入：体态（转体/前倾/低头）渐入，腿臂立刻动
+        float bodyWeight = 1f;
+        if (_walkFadeInRemaining > 0f)
+        {
+            float raw = 1f - Mathf.Clamp01(_walkFadeInRemaining / WALK_FADE_IN_DURATION);
+            bodyWeight = raw * raw; // 二次缓入
+            _walkFadeInRemaining -= Time.deltaTime;
+        }
+
         // 走路的体态（转体 + 前倾 + 低头 + 呼吸）
-        ApplyWalkBodyPose(1f);
+        ApplyWalkBodyPose(bodyWeight);
 
         // ★ 腿/臂动态摆动 — 停止后渐消不需要这些
         // ★ 左腿参数

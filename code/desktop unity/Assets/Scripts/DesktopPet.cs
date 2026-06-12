@@ -567,9 +567,12 @@ public class DesktopPet : MonoBehaviour
     public void Resume()
     {
         isPaused = false;
-        if (onGround && currentTask == GroundTask.None)
+        if (onGround)
         {
-            StartNextGroundTask();
+            if (currentTask == GroundTask.None || currentTask == GroundTask.StopTime)
+            {
+                StartNextGroundTask();
+            }
         }
     }
 
@@ -580,6 +583,32 @@ public class DesktopPet : MonoBehaviour
     {
         petX = x;
         petY = y;
+    }
+
+    /// <summary>
+    /// 强制停止走路（被右键菜单调用）
+    /// </summary>
+    public void ForceStop()
+    {
+        // 如果当前是边缘任务，强制转为自由走路
+        if (currentTask == GroundTask.MoveLeftEdge)
+            currentTask = GroundTask.MoveLeftTime;
+        else if (currentTask == GroundTask.MoveRightEdge)
+            currentTask = GroundTask.MoveRightTime;
+
+        // 立即结束当前任务
+        if (currentTask != GroundTask.None && currentTask != GroundTask.StopTime)
+        {
+            petVx = 0;
+            if (_renderer != null)
+            {
+                _renderer.ShowStopPose(0f);
+                _renderer.OnPetUpdate(petX, petY, petWidth, petHeight,
+                    petVx, petVy, onGround, isDragging, isPaused);
+            }
+            _taskEndTime = 0f;
+            StartGroundTask(GroundTask.StopTime);
+        }
     }
 
     #endregion

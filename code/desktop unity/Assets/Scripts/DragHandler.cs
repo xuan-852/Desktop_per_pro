@@ -58,6 +58,9 @@ public class DragHandler : MonoBehaviour
     private Vector2 _velocityBuffer;
     private int _velocityFrames;
 
+    // 右键菜单
+    private ContextMenu _contextMenu;
+
     // 鼠标在宠物范围内的状态（每帧更新）
     private bool _mouseOverPet = false;
 
@@ -68,17 +71,71 @@ public class DragHandler : MonoBehaviour
         if (_window == null)
             _window = FindObjectOfType<WindowOverlay>();
         _renderer = GetComponent<IPetRenderer>();
+        _contextMenu = GetComponent<ContextMenu>();
+        if (_contextMenu == null)
+        {
+            _contextMenu = FindObjectOfType<ContextMenu>();
+            if (_contextMenu == null)
+            {
+                // 自动挂载 ContextMenu（新脚本，防止用户忘记手动添加）
+                _contextMenu = gameObject.AddComponent<ContextMenu>();
+                Debug.Log("[DragHandler] 自动挂载 ContextMenu 组件");
+            }
+        }
     }
 
     private void Update()
     {
-        // ========== 1. 每帧更新点击穿透状态 ==========
+        // ========== 0. 菜单打开时：菜单自己的点击穿透管理 ==========
+        // ★优先处理，不依赖 UpdateClickThrough（避免菜单打开后被 WS_EX_TRANSPARENT 吞掉输入）
+        if (_contextMenu != null && _contextMenu.IsOpen)
+        {
+            Vector2 mousePos = GetMousePos();
+            bool overMenu = _contextMenu.IsMouseOverMenu(mousePos);
+            _window?.SetClickThrough(!overMenu);   // 菜单区域内可点击，区域外穿透
+            _mouseOverPet = false; // 重置，确保关闭后重建穿透状态
+
+            // ★ 右键点击时关闭菜单
+            if (Input.GetMouseButtonDown(1))
+            {
+                _contextMenu.Close();
+                // 关闭后不 return，让本帧正常处理
+            }
+            else
+            {
+                return; // 菜单打开且无右键时不处理拖拽
+            }
+        }
+
+        // ========== 1. 每帧更新点击穿透（★必须在输入检测之前，否则右键被 WS_EX_TRANSPARENT 吞掉）==========
         UpdateClickThrough();
+
+        // ========== 2. 右键菜单 ==========
+        if (Input.GetMouseButtonDown(1))
+        {
+            Vector2 mousePos = GetMousePos();
+            if (IsPointInPet(mousePos))
+            {
+                if (_contextMenu != null)
+                {
+                    _contextMenu.Open(mousePos);
+                    // 打开后立即管理穿透，不等下一帧
+                    bool overMenu = _contextMenu.IsMouseOverMenu(mousePos);
+                    _window?.SetClickThrough(!overMenu);
+                    _mouseOverPet = false;
+                    return;
+                }
+            }
+            else
+            {
+                if (_contextMenu != null) _contextMenu.Close();
+            }
+        }
 
         if (_pet.isPaused)
             return;
 
-        // ========== 2. 鼠标左键按下 ==========
+        // ========== 3. 鼠标左键按下 ==========
         if (Input.GetMouseButtonDown(0))
         {
             Vector2 mousePos = GetMousePos();
@@ -94,7 +151,7 @@ public class DragHandler : MonoBehaviour
             }
         }
 
-        // ========== 3. 鼠标移动（按住左键） ==========
+        // ========== 4. 鼠标移动（按住左键） ==========
         if (Input.GetMouseButton(0) && _isClickCandidate)
         {
             Vector2 mousePos = GetMousePos();
@@ -134,7 +191,7 @@ public class DragHandler : MonoBehaviour
             }
         }
 
-        // ========== 4. 鼠标左键释放 ==========
+        // ========== 5. 鼠标左键释放 ==========
         if (Input.GetMouseButtonUp(0))
         {
             if (_isDragging)

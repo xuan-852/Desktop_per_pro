@@ -37,7 +37,6 @@
     captionpos=b
 }
 
-% ── 针对 C# 的样式 ──
 \lstdefinestyle{csharp}{
     language=[Sharp]C,
     basicstyle=\small\ttfamily,
@@ -53,8 +52,8 @@
     captionpos=b
 }
 
-\title{\vspace{-2cm}桌面宠物 --- Unity 迁移方案设计文档}
-\author{}
+\title{\vspace{-2cm}Desktop Pet --- 桌面宠物技术文档}
+\author{符玄桌宠项目}
 \date{\today}
 
 \begin{document}
@@ -63,10 +62,10 @@
 \thispagestyle{empty}
 
 \begin{abstract}
-本文档为桌面宠物项目从 GDI+ 原生方案迁移至 Unity 3D 引擎的技术方案设计。
-新方案将利用 Unity 引擎的 3D 渲染能力直接加载米哈游（崩坏：星穹铁道）的角色 3D 模型，
-结合透明窗口叠加技术实现桌面宠物效果。本文档涵盖项目目标、技术架构、实施路线和关键脚本设计，
-作为后续实际开发的指导文档。
+本文档为桌面宠物项目的完整技术文档。项目基于 Unity 2022.3 LTS 引擎，
+使用 Live2D Cubism SDK 5-r.4 渲染《崩坏：星穹铁道》角色「符玄」，
+通过 Win32 透明窗口叠加技术实现桌面宠物效果。
+文档涵盖系统架构、各模块设计、动画系统、状态机及交互机制。
 \end{abstract}
 
 \tableofcontents
@@ -78,385 +77,589 @@
 
 \subsection{项目背景}
 
-现有桌面宠物程序（\texttt{text1.c}）基于 Windows GDI+ 分层窗口技术，
-使用静态 PNG 图片的硬切换来模拟宠物动画。该方案存在以下局限：
+原桌面宠物程序基于 Windows GDI+ 分层窗口技术（\texttt{text1.c}），使用静态 PNG 图片硬切换模拟动画。
+本项目将其迁移至 Unity 引擎，利用 Live2D Cubism SDK 实现参数化变形动画，
+获得更流畅的视觉效果和更丰富的交互能力。
+
+\subsection{技术栈}
 
 \begin{itemize}
-    \item 动画效果生硬：仅 9 张离散 PNG 整图切换，无过渡帧、无插值
-    \item 开发成本高：每新增一个动作状态都需要绘制新 PNG
-    \item 扩展性差：难以实现 Live2D 风格的参数化变形
+    \item \textbf{引擎}：Unity 2022.3.62t7 (LTS)
+    \item \textbf{角色渲染}：Live2D Cubism SDK 5-r.4（参数化变形 + 实时物理模拟）
+    \item \textbf{窗口管理}：Win32 API（user32.dll）--- 色键透明、置顶、点击穿透
+    \item \textbf{交互方式}：左键拖拽/抛掷、右键上下文菜单
+    \item \textbf{语言}：C\# 脚本
+    \item \textbf{平台}：Windows 10/11（Win64）
 \end{itemize}
 
-本方案旨在将桌面宠物迁移至 Unity 引擎，利用 3D 模型渲染实现更流畅的动画效果，
-并为后续引入 Live2D 技术奠定基础。
+\subsection{项目状态}
 
-\subsection{项目目标}
-
-\begin{enumerate}
-    \item 搭建基于 Unity 的桌面宠物框架，支持透明窗口叠加在桌面上
-    \item 导入并渲染米哈游（崩坏：星穹铁道）角色 3D 模型（符玄）
-    \item 实现基础的桌面宠物交互功能：拖拽、点击反馈、空闲动画
-    \item 保留现有程序的 AI 聊天功能（通过进程间通信与 \texttt{text1.exe} 协作）
-    \item 为后续引入 Live2D Cubism SDK 预留接口
-\end{enumerate}
-
-\subsection{开发环境}
-
+功能已完成：
 \begin{itemize}
-    \item 引擎：Unity 2022.3.62t7 (LTS)
-    \item 语言：C\#（脚本）、HLSL（着色器）
-    \item 平台：Windows 10/11（Win64）
-    \item 关键技术：TransparentWindowManager、Windows API (user32.dll)
-    \item 源码管理：Git（仓库路径：\texttt{D:/Unity/projects/Desktop\_per\_pro}）
+    \item Live2D 模型加载与渲染（自动 AssetDatabase / Resources 双路径）
+    \item 桌面透明窗口（色键抠除 \#00FF00 + WS\_EX\_LAYERED）
+    \item 鼠标穿透动态管理（WS\_EX\_TRANSPARENT）
+    \item 像素物理引擎（重力、边界碰撞、抛掷）
+    \item 地面任务状态机（5 种行为加权随机切换）
+    \item 走路动画（侧身转体 + 腿臂交叉摆动 + 上下颠簸 + 体态淡入淡出）
+    \item 10 种空闲动作循环（歪头、微笑、挑眉、星辉、伸懒腰、爱心、数钱、委屈、法阵、害羞）
+    \item 右键上下文菜单（权重调整 + 强制动作播放）
+    \item 强制动作锁定机制（播放期间不被走路覆盖，播完自动恢复）
+    \item 3D 模型渲染管线预留（HybridRenderer 双渲染器交叉淡入淡出）
 \end{itemize}
 
 % ═══════════════════════════════════════════
-\section{新旧架构对比}
-% ═══════════════════════════════════════════
-
-\begin{table}[H]
-\centering
-\caption{GDI+ 方案 vs Unity 方案对比}
-\label{tab:compare}
-\begin{tabular}{lcc}
-\toprule
-\textbf{维度} & \textbf{旧方案 (GDI+)} & \textbf{新方案 (Unity)} \\
-\midrule
-渲染引擎 & GDI+ (CPU 渲染) & Unity (DirectX 11/12, GPU 渲染) \\
-模型格式 & PNG 整图 & FBX / AssetBundle (3D 网格) \\
-动画方式 & 整图硬切换 & 骨骼动画 + Blend Shape \\
-平滑度 & 无过渡（硬切） & 60fps 顶点插值 \\
-表情系统 & 无 & Blend Shape 参数化 \\
-光照 & 预绘制在 PNG 中 & 实时 PBR 光照 \\
-物理模拟 & 简单重力公式 & Unity Physics / 自定义 \\
-窗口透明 & UpdateLayeredWindow (GDI) & TransparentWindowManager \\
-鼠标交互 & 原生窗口消息 & Unity Input System \\
-模型复用 & 仅当前 9 张 PNG & 可导入任意 3D 模型 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-% ═══════════════════════════════════════════
-\section{技术架构}
+\section{系统架构}
 % ═══════════════════════════════════════════
 
 \subsection{整体架构}
 
-新系统采用双层架构：Unity 负责 3D 渲染和交互，旧程序作为后台服务提供聊天和托盘功能。
-
-\begin{figure}[H]
-\centering
 \begin{lstlisting}[frame=single,numbers=none,style=csharp]
-┌─────────────────────────────────────────────────┐
-│            Unity 窗口 (透明叠加层)                │
-│  ┌───────────────────────────────────────────┐  │
-│  │  Camera (Clear=SolidColor, BG=(0,0,0,0))  │  │
-│  │                                            │  │
-│  │  符玄 3D 模型                               │  │
-│  │  ├── 空闲动画 (Idle/Breath)                │  │
-│  │  ├── 点击反应 (Touch/Poke)                 │  │
-│  │  ├── 拖拽模式 (OnMouseDrag)                │  │
-│  │  ├── 行走模式 (Walk)                       │  │
-│  │  └── 表情切换 (BlendShape)                  │  │
-│  │                                            │  │
-│  │  交互层                                     │  │
-│  │  ├── 鼠标穿透区 (透明区域穿透点击)           │  │
-│  │  ├── 拖拽触发器 (点击模型拖动)               │  │
-│  │  └── 碰撞体 (Collider 检测点击)             │  │
-│  └───────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────┘
-                        │ 进程间通信 (UDP / 命名管道)
-                        ▼
-┌─────────────────────────────────────────────────┐
-│          text1.exe (后台服务进程)                 │
-│  ├── 系统托盘图标                                │
-│  ├── WebView2 AI 聊天窗口                       │
-│  ├── 设置窗口 (权重/颜色配置)                    │
-│  └── 托盘菜单 (退出/隐藏)                       │
-└─────────────────────────────────────────────────┘
++-----------------------------------------------------------------+
+|            Unity 窗口 (透明叠加层)                                |
+|  +-----------------------------------------------------------+  |
+|  |  Camera (Clear=SolidColor, BG=#00FF00)                     |  |
+|  |                                                              |  |
+|  |  DesktopPet (主控)                                          |  |
+|  |    +-- 像素物理 (重力/碰撞/落地)                             |  |
+|  |    +-- 地面任务状态机 (加权随机选择)                          |  |
+|  |                                                              |  |
+|  |  DragHandler (交互)                                         |  |
+|  |    +-- 左键拖拽窗口移动 + 抛掷                               |  |
+|  |    +-- 右键菜单开关                                          |  |
+|  |    +-- 点击穿透管理 (每帧)                                   |  |
+|  |                                                              |  |
+|  |  Live2DRenderer (渲染)                                      |  |
+|  |    +-- CubismModel 参数驱动                                  |  |
+|  |    +-- 眨眼/呼吸/噪声微动                                    |  |
+|  |    +-- 空闲动作 1-10 循环                                    |  |
+|  |    +-- 走路动画 (转体/抬腿/颠簸)                            |  |
+|  |    +-- 体态淡入淡出 (0.3s/0.4s)                             |  |
+|  |    +-- 强制动作锁定 (actionLocked)                           |  |
+|  |                                                              |  |
+|  |  ContextMenu (UI)                                           |  |
+|  |    +-- 权重调整 (5 种任务权重)                              |  |
+|  |    +-- 强制动作触发按钮 (10 个动作)                          |  |
+|  |    +-- OnGUI 直接绘制 (无 Canvas)                            |  |
+|  |                                                              |  |
+|  |  WindowOverlay (Win32)                                      |  |
+|  |    +-- SetWindowLong (透明/穿透)                             |  |
+|  |    +-- SetLayeredWindowAttributes (色键)                     |  |
+|  |    +-- SetWindowPos (全屏置顶)                               |  |
+|  +-----------------------------------------------------------+  |
++-----------------------------------------------------------------+
 \end{lstlisting}
-\end{figure}
 
-\subsection{透明窗口实现}
+\subsection{组件依赖关系}
 
-利用 \texttt{Unity\_TransparentWindowManager} 开源库\cite{TransparentWindow}实现。
-核心原理：
+关键交互流程：
+
+\begin{description}
+    \item[渲染循环] DesktopPet.Update $\to$ Live2DRenderer.LateUpdate（参数设置）
+    \item[物理更新] Update $\to$ StepPet（重力/速度/位置）$\to$ UpdateGroundTask（状态机）
+    \item[强制动作] ContextMenu.DrawActionButton $\to$ DesktopPet.ForceStop $\to$
+        Live2DRenderer.ForceIdleAction $\to$（锁定）$\to$ ResetIdleAction（解锁+回调）
+    \item[菜单交互] DragHandler.Update（Block 0: 菜单穿透管理）$\to$ ContextMenu.IsOpen
+    \item[走路淡入] LateUpdate 检测 isWalking 切换 $\to$ 启动 walkFadeInRemaining（0.3s 体态渐入）
+\end{description}
+
+% ═══════════════════════════════════════════
+\section{窗口管理 (WindowOverlay)}
+% ═══════════════════════════════════════════
+
+\subsection{色键透明原理}
 
 \begin{enumerate}
-    \item 设置 Camera 的 ClearFlags 为 SolidColor，Background 为 (0,0,0,0)
-    \item 通过 Windows API \texttt{SetWindowLong} 设置 \texttt{WS\_EX\_LAYERED} 扩展样式
-    \item 调用 \texttt{SetLayeredWindowAttributes} 将颜色键 (0,0,0) 设为透明
-    \item 鼠标穿透：设置 \texttt{WS\_EX\_TRANSPARENT} 样式，让非模型区域点击穿透到桌面
+    \item Camera 设置 ClearFlags = SolidColor，Background = (0, 1, 0) 即 \#00FF00 亮绿色
+    \item 通过 Win32 API \texttt{SetWindowLong} 设置 \texttt{WS\_EX\_LAYERED} 扩展样式
+    \item \texttt{SetLayeredWindowAttributes} 将颜色键 0x0000FF00 设为透明
+    \item 构建版自动重试 5 次查找窗口句柄（延迟帧防竞态）
 \end{enumerate}
 
-\subsection{模型渲染管线}
-
-\begin{enumerate}
-    \item 从社区获取符玄 FBX 模型（含骨骼和贴图）
-    \item 导入 Unity 作为 Model Prefab
-    \item 设置 Avatar 和 Animator Controller
-    \item 编写动画状态机：Idle $\leftrightarrow$ Walk $\leftrightarrow$ Touch $\leftrightarrow$ Fall
-    \item 通过 Blend Shape 控制面部表情
-\end{enumerate}
-
-\subsection{进程间通信（可选）}
-
-若保留旧程序的 AI 聊天功能，Unity 和 \texttt{text1.exe} 之间可通过以下方式通信：
+\subsection{点击穿透 (Click-Through)}
 
 \begin{itemize}
-    \item \textbf{UDP 本地回环}：Unity 监听 127.0.0.1:xxxx，接收聊天命令
-    \item \textbf{命名管道 (Named Pipe)}：Windows 原生 IPC，更可靠
-    \item \textbf{共享文件}：最简单，但延迟较高
+    \item \texttt{WS\_EX\_TRANSPARENT} 样式让鼠标事件透过透明区域传到桌面
+    \item 每帧根据鼠标位置动态切换：鼠标在宠物区域内 $\to$ 移除穿透（接收点击）；
+        鼠标在区域外 $\to$ 添加穿透（点击不受影响）
+    \item 菜单打开时：菜单区域内可交互，区域外穿透（优先于普通穿透逻辑）
+\end{itemize}
+
+\subsection{窗口样式}
+
+\begin{itemize}
+    \item 全屏无边框窗口（WS\_POPUP）
+    \item 置顶（HWND\_TOPMOST）
+    \item 不在任务栏显示（WS\_EX\_TOOLWINDOW）
+    \item 工具窗口风格
 \end{itemize}
 
 % ═══════════════════════════════════════════
-\section{关键脚本设计}
+\section{物理引擎 (DesktopPet)}
 % ═══════════════════════════════════════════
 
-\subsection{DesktopPet.cs --- 宠物主控}
+\subsection{坐标系}
 
-负责宠物状态管理、物理模拟和生命周期。
+采用像素坐标系：左上角为原点 (0, 0)，X 轴向右为正，Y 轴向下为正。
+物理状态全部用整数像素值表示，避免浮点精度问题。
 
-\begin{lstlisting}[style=csharp,caption={DesktopPet.cs 骨架},label={lst:desktoppet}]
-using UnityEngine;
+\subsection{物理参数}
 
-public class DesktopPet : MonoBehaviour
+\begin{table}[H]
+\centering
+\caption{核心物理常量}
+\label{tab:physics}
+\begin{tabular}{lc}
+\toprule
+\textbf{参数} & \textbf{值} \\
+\midrule
+重力加速度 & 1 px/frame² \\
+最大下落速度 & 8 px/frame \\
+最大水平速度 & 12 px/frame \\
+地面 Y 偏移 & -300 px（相对于屏幕底部） \\
+速度系数 & 0.5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{地面任务状态机}
+
+宠物共有 5 种地面行为，通过加权随机选择：
+
+\begin{table}[H]
+\centering
+\caption{GroundTask 状态机}
+\label{tab:tasks}
+\begin{tabular}{lcl}
+\toprule
+\textbf{任务} & \textbf{权重(默认)} & \textbf{行为} \\
+\midrule
+MoveLeftEdge  & 1   & 向左走到屏幕左边缘 \\
+MoveRightEdge & 1   & 向右走到屏幕右边缘 \\
+MoveLeftTime  & 1   & 向左走随机时长 (2-4s) \\
+MoveRightTime & 1   & 向右走随机时长 (2-4s) \\
+StopTime      & 6   & 停止随机时长 (6-15s) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+状态机特点：
+\begin{itemize}
+    \item 到达边缘后自动转向：左边缘 $\to$ 右走/停止；右边缘 $\to$ 左走/停止
+    \item 定时任务到期 $\to$ 重新加权随机选择
+    \item 停止任务期间播放空闲动作循环
+\end{itemize}
+
+\subsection{暂停/恢复机制}
+
+\begin{itemize}
+    \item \texttt{isPaused} 布尔值：暂停时物理 Update 直接 return
+    \item \texttt{ForceStop()}：将边缘任务转为定时任务，清零 petVx，启动停止任务
+    \item \texttt{Resume()}：恢复时如果当前无任务或停止中，启动新任务
+    \item \texttt{Pause(float)}：暂停指定秒数后自动恢复
+\end{itemize}
+
+% ═══════════════════════════════════════════
+\section{Live2D 渲染器 (Live2DRenderer)}
+% ═══════════════════════════════════════════
+
+\subsection{概述}
+
+\texttt{Live2DRenderer} 是核心渲染组件，通过 Cubism SDK 驱动模型参数实现所有动画。
+继承自 \texttt{IPetRenderer} 接口，被 \texttt{HybridRenderer} 包装管理。
+
+\subsection{生命周期}
+
+\begin{enumerate}
+    \item Start: 自动加载模型（优先 AssetDatabase，降级 Resources.Load）
+    \item Update: 计算走路相位 + 垂直颠簸偏移 + 模型位置同步
+    \item LateUpdate: 设置所有参数（眨眼、呼吸、噪声、空闲动作/走路）
+\end{enumerate}
+
+\subsection{参数驱动系统}
+
+使用 \texttt{SetParameter(name, value)} 统一设置 Cubism 参数，
+涵盖约 60+ 个参数 ID：
+\begin{itemize}
+    \item \textbf{身体}：ParamBodyAngleX/Y/Z、ParamBreath
+    \item \textbf{头部}：ParamAngleX/Y/Z、ParamEyeBallX/Y
+    \item \textbf{眼睛}：ParamEyeLOpen/ROpen、ParamEyeLSmile/RSmile
+    \item \textbf{嘴部}：ParamMouthForm
+    \item \textbf{眉毛}：ParamBrowRY/LY
+    \item \textbf{特效}：Param121（黑幕切换）、Param132（眼镜发光）、
+        Param431/911/741（星辉环显隐）等
+\end{itemize}
+
+\subsection{空闲动作系统}
+
+共有 10 种空闲动作循环播放（1 $\to$ 2 $\to$ $\cdots$ $\to$ 10 $\to$ 1）：
+
+\begin{table}[H]
+\centering
+\caption{空闲动作列表}
+\label{tab:idle}
+\begin{tabular}{clc}
+\toprule
+\textbf{ID} & \textbf{名称} & \textbf{时长(s)} \\
+\midrule
+1 & 歪头 (Tilt)    & 2.0 \\
+2 & 微笑 (Smile)   & 2.0 \\
+3 & 挑眉 (Brow)    & 2.0 \\
+4 & 星辉 (StarSpin) & 6.0 \\
+5 & 伸懒腰 (Stretch) & 4.5 \\
+6 & 爱心 (HeartEyes) & 3.0 \\
+7 & 数钱 (Money)   & 3.5 \\
+8 & 委屈 (Cry)     & 3.5 \\
+9 & 法阵 (MagicCircle) & 5.5 \\
+10 & 害羞 (Blush)  & 3.5 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+每个动作使用缓入缓出曲线 $f(t)=\sin(t\pi)$，其中 $t\in[0,1]$。
+动作结束时调用 \texttt{ResetIdleAction()} 清理参数并播放下一个。
+
+\textbf{暂停时}：\texttt{isPaused = true} 时不播新动作（菜单打开时冻结动作循环）。
+
+\subsection{走路动画}
+
+采用横版侧面走路风格：
+
+\begin{itemize}
+    \item \textbf{转体}：ParamBodyAngleY = 18°（身体转向侧面，方向自动匹配翻转）
+    \item \textbf{前倾}：ParamBodyAngleX = 5°
+    \item \textbf{低头}：ParamAngleY = 8°
+    \item \textbf{步频}：5 Hz（\texttt{WALK\_SWAY\_FREQ}）
+    \item \textbf{抬腿}：Param165（左）/ Param164（右），幅度 4
+    \item \textbf{摆臂}：交叉对位（左腿前 $\to$ 右手前）
+    \item \textbf{颠簸}：$1 - |\sin(\text{phase})|\times 4\,\text{px}$（迈步时最低）
+    \item \textbf{呼吸加深}：ParamBreath = 3 + 相位波
+\end{itemize}
+
+\subsection{体态过渡}
+
+\begin{table}[H]
+\centering
+\caption{过渡参数}
+\label{tab:blend}
+\begin{tabular}{lcc}
+\toprule
+\textbf{过渡} & \textbf{时长} & \textbf{曲线} \\
+\midrule
+走路 $\to$ 空闲（消退） & 0.4s & 二次缓出 \\
+空闲 $\to$ 走路（淡入） & 0.3s & 二次缓入 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+走路 $\to$ 空闲时，走路的体态参数（转体/前倾/低头）经 0.4s 渐消，
+同时空闲参数已经开始播放，实现平滑过渡。
+空闲 $\to$ 走路时，腿臂立刻摆动（走路感瞬间有），体态经 0.3s 渐入（不走硬边）。
+
+\subsection{强制动作锁定机制}
+
+右键菜单触发强制动作时的保护机制：
+
+\begin{enumerate}
+    \item \texttt{ForceIdleAction(id)} 设置 \texttt{\_actionLocked = true}
+    \item \texttt{isWalking} 检测条件中加入 \texttt{!\ \_actionLocked}，锁定期间不切走路
+    \item 动作播放完毕 $\to$ \texttt{ResetIdleAction()} 解锁 + 触发 \texttt{OnForcedActionFinished} 事件
+    \item 回调恢复宠物运动（取消暂停 + Resume）
+\end{enumerate}
+
+% ═══════════════════════════════════════════
+\section{交互系统 (DragHandler)}
+% ═══════════════════════════════════════════
+
+\subsection{左键拖拽}
+
+\begin{enumerate}
+    \item 鼠标在宠物区域内按下左键 $\to$ 记录拖拽起点
+    \item 移动超过 5px 阈值进入拖拽模式
+    \item 拖拽中：SetWindowPos 跟随鼠标移动，关闭穿透
+    \item 释放时：计算末速度（缓冲滑动平均），施加给宠物（保证 vy > 2）
+    \item 进入自由落体状态
+\end{enumerate}
+
+\subsection{右键菜单}
+
+\begin{enumerate}
+    \item 鼠标在宠物区域内按下右键 $\to$ 打开 ContextMenu
+    \item 菜单打开时：区域内可交互，区域外点击穿透
+    \item 右键再次点击可关闭菜单
+    \item 点击动作按钮：ForceStop $\to$ ForceIdleAction $\to$ 菜单关 UI $\to$ 动作播完自动恢复
+\end{enumerate}
+
+\subsection{点击穿透管理}
+
+每帧执行（DragHandler.Update）：
+\begin{enumerate}
+    \item 菜单打开时：优先菜单穿透规则
+    \item 菜单关闭时：鼠标在宠物矩形内 $\to$ 关穿透；鼠标在外 $\to$ 开穿透
+    \item 确保猫爪（WS\_EX\_TRANSPARENT）不吞掉输入事件
+\end{enumerate}
+
+% ═══════════════════════════════════════════
+\section{上下文菜单 (ContextMenu)}
+% ═══════════════════════════════════════════
+
+\subsection{UI 实现}
+
+使用 Unity 的 \texttt{OnGUI} 系统直接绘制（无需 Canvas / UI Prefab），
+适用于透明窗口架构。
+
+样式特点：
+\begin{itemize}
+    \item 深色 VS Code 风格背景（0.15, 0.15, 0.17, 0.95）
+    \item 粉色标题（0.9, 0.6, 0.8）+ 粉色强调色（0.8, 0.4, 0.6）
+    \item 半透明圆角矩形背景
+    \item 可滚动内容区域
+\end{itemize}
+
+\subsection{功能区域}
+
+\begin{enumerate}
+    \item \textbf{权重设置}：5 种地面任务的权重滑块（0-10），应用按钮即时生效
+    \item \textbf{强制动作}：10 个动作按钮，点击后强制播放对应动作
+    \item \textbf{关闭按钮}：恢复宠物运动 + 清理回调
+\end{enumerate}
+
+\subsection{动作执行流程}
+
+点击动作按钮时的完整流程：
+
+\begin{enumerate}
+    \item \texttt{ForceStop()} $\to$ 停止走路，清零 petVx，切到 StopTime
+    \item \texttt{ForceIdleAction(id)} $\to$ 设置 \texttt{\_actionLocked = true} + 播放动作
+    \item \texttt{\_isOpen = false} $\to$ 菜单 UI 关闭（OnGUI 不再绘制）
+    \item 注册 \texttt{OnForcedActionFinished} 回调
+    \item 动作自然播完（easing 曲线结束）$\to$ \texttt{ResetIdleAction()} 触发回调
+    \item 回调：取消暂停 + Resume $\to$ 宠物自动开始走路/停止
+    \item 走路体态经 0.3s 淡入，过渡平滑
+\end{enumerate}
+
+% ═══════════════════════════════════════════
+\section{混合渲染 (HybridRenderer)}
+% ═══════════════════════════════════════════
+
+\subsection{设计目标}
+
+为未来引入 3D 模型渲染预留的混合渲染层。
+当前仅 Live2D 渲染器活跃，3D 渲染器已挂载但 disabled。
+
+\subsection{切换规则}
+
+\begin{itemize}
+    \item 空闲/点击/停止 $\to$ Live2D（精细表情 + 物理飘动）
+    \item 走路/飞行/空中 $\to$ 3D（骨骼动画，future work）
+    \item 过渡方式：Alpha 交叉淡入淡出（0.3s）
+\end{itemize}
+
+\subsection{接口设计}
+
+\texttt{IPetRenderer} 接口定义了通用渲染器契约：
+
+\begin{lstlisting}[style=csharp,caption={IPetRenderer 接口},label={lst:ipet}]
+public interface IPetRenderer
 {
-    [Header("运动参数")]
-    public float gravity = 9.8f;        // 重力加速度
-    public float groundY = 0f;          // 地面 Y 坐标
-    public float moveSpeed = 2f;        // 行走速度
-    public float breathAmplitude = 0.02f; // 呼吸浮动幅度
-
-    // 宠物状态枚举
-    public enum PetState { Idle, Walking, Dragging, Falling, Landing }
-    public PetState currentState = PetState.Idle;
-
-    private Vector3 velocity;           // 当前速度
-    private Animator animator;
-    private bool isGrounded = false;
-
-    void Start()
-    {
-        animator = GetComponent<Animator>();
-    }
-
-    void Update()
-    {
-        switch (currentState)
-        {
-            case PetState.Idle:
-                UpdateIdle();
-                break;
-            case PetState.Falling:
-                UpdateFalling();
-                break;
-            case PetState.Walking:
-                UpdateWalking();
-                break;
-        }
-    }
-
-    void UpdateIdle()
-    {
-        // 呼吸浮动（正弦波动）
-        float breath = Mathf.Sin(Time.time * 2f) * breathAmplitude;
-        transform.localPosition += Vector3.up * breath * Time.deltaTime;
-    }
-
-    void UpdateFalling()
-    {
-        // 重力下落
-        velocity.y -= gravity * Time.deltaTime;
-        transform.position += velocity * Time.deltaTime;
-
-        // 落地检测
-        if (transform.position.y <= groundY)
-        {
-            Vector3 pos = transform.position;
-            pos.y = groundY;
-            transform.position = pos;
-            velocity.y = 0;
-            isGrounded = true;
-            SwitchState(PetState.Landing);
-            // 播放落地动画后切回 Idle
-        }
-    }
-
-    void UpdateWalking()
-    {
-        // 随机左右移动
-        // 到达边界时掉头或停止
-    }
-
-    public void SwitchState(PetState newState)
-    {
-        currentState = newState;
-        // 触发对应动画
-        if (animator != null)
-            animator.SetInteger("State", (int)newState);
-    }
+    void ShowDragPose();
+    void ShowClickPose();
+    void ShowLandPose();
+    void ShowWalkPose();
+    void ShowStopPose(float lockSeconds);
+    void OnPetUpdate(int petX, int petY, int petWidth, int petHeight,
+                     int petVx, int petVy, bool onGround,
+                     bool isDragging, bool isPaused);
 }
 \end{lstlisting}
 
-\subsection{DragHandler.cs --- 拖拽交互}
+% ═══════════════════════════════════════════
+\section{动画详述}
+% ═══════════════════════════════════════════
 
-处理鼠标拖拽宠物移动窗口的逻辑。
+\subsection{空闲动作详解}
 
-\begin{lstlisting}[style=csharp,caption={DragHandler.cs 骨架},label={lst:drag}]
-using UnityEngine;
+\subsubsection{动作 1 --- 歪头}
+\begin{itemize}
+    \item 使用 $\sin(t\pi/2)$ 缓入缓出曲线
+    \item ParamAngleZ = 8°（歪头）、2s 完成
+\end{itemize}
 
-public class DragHandler : MonoBehaviour
-{
-    [Header("拖拽参数")]
-    public float throwVelocityScale = 5f; // 抛掷力度缩放
+\subsubsection{动作 2 --- 微笑}
+\begin{itemize}
+    \item ParamEyeLSmile / RSmile = 0.6（眯眼笑）
+    \item ParamMouthForm = 0.4（张嘴微笑）
+    \item 2s 完成
+\end{itemize}
 
-    private Vector3 dragOffset;
-    private Vector3 lastMousePos;
-    private Vector3 throwVelocity;
+\subsubsection{动作 3 --- 挑眉}
+\begin{itemize}
+    \item ParamBrowRY / LY = 6°（眉毛抬起）
+    \item 2s 完成
+\end{itemize}
 
-    void OnMouseDown()
-    {
-        // 记录点击偏移
-        dragOffset = transform.position - GetMouseWorldPos();
-        lastMousePos = GetMouseWorldPos();
+\subsubsection{动作 4 --- 星辉环绕}
+复杂多参数协同动画：
+\begin{itemize}
+    \item 三环（内/中/外紫环）不同的旋转速度，缓入缓出
+    \item 黑幕背景（Param121 + Param137）+ 眼镜发光（Param132）
+    \item 星星闪烁 + 外围星脉动
+    \item 6s 完成
+\end{itemize}
 
-        // 通知 DesktopPet 进入拖拽状态
-        GetComponent<DesktopPet>()?.SwitchState(DesktopPet.PetState.Dragging);
-    }
+\subsubsection{动作 5 --- 伸懒腰}
+\begin{itemize}
+    \item 右手切换 + 伸出（Param92 + Param118 + 手指张合）
+    \item 身体后仰（ParamBodyAngleX = $-5^\circ$）
+    \item 眯眼 + 张嘴（打哈欠表情）+ 深吸一口气
+    \item 4.5s 梯形曲线（快起 $\to$ 保持 $\to$ 快落）
+\end{itemize}
 
-    void OnMouseDrag()
-    {
-        Vector3 currentPos = GetMouseWorldPos();
-        // 计算抛掷速度
-        throwVelocity = (currentPos - lastMousePos) / Time.deltaTime;
-        lastMousePos = currentPos;
+\subsubsection{动作 6 --- 爱心眼}
+\begin{itemize}
+    \item 爱心眼闪烁（Param109 = 爱心眼开关）
+    \item 歪头 12° + 微笑 + 身体微倾
+    \item 3s 完成
+\end{itemize}
 
-        // 更新宠物位置
-        transform.position = currentPos + dragOffset;
+\subsubsection{动作 7 --- 数钱}
+\begin{itemize}
+    \item 钱表情（Param122）+ 双眼放光（Param121/137/132）
+    \item 美滋滋微笑 + 歪头 + 身体摇晃
+    \item 3.5s 完成
+\end{itemize}
 
-        // 同步更新 Unity 窗口位置（调用 Win32 API）
-        UpdateWindowPosition();
-    }
+\subsubsection{动作 8 --- 委屈}
+\begin{itemize}
+    \item 泪眼（Param130）+ 低头（ParamAngleY = 6°）
+    \item 嘴巴微颤 + 八字眉（眉头抬起）
+    \item 身体微微抽动（抽泣感）
+    \item 3.5s 完成
+\end{itemize}
 
-    void OnMouseUp()
-    {
-        // 松开时赋予初速度
-        DesktopPet pet = GetComponent<DesktopPet>();
-        if (pet != null)
-        {
-            // 将鼠标速度转换为物体的初速度
-            // pet.SetVelocity(throwVelocity * throwVelocityScale);
-            pet.SwitchState(DesktopPet.PetState.Falling);
-        }
-    }
+\subsubsection{动作 9 --- 法阵显现}
+最复杂的多阶段动画（4 个 Phase）：
+\begin{itemize}
+    \item Phase 1 (0-35\%)：黑幕开启 + 七星盘浮现
+    \item Phase 2 (20-50\%)：白圈展开 + 呼吸位移
+    \item Phase 3 (35-65\%)：眼镜发光 + 镜头微动 + 人物缩小
+    \item Phase 4 (75-100\%)：各项参数二次缓出消退
+    \item 5.5s 完成
+\end{itemize}
 
-    Vector3 GetMouseWorldPos()
-    {
-        Vector3 mousePos = Input.mousePosition;
-        mousePos.z = Camera.main.WorldToScreenPoint(transform.position).z;
-        return Camera.main.ScreenToWorldPoint(mousePos);
-    }
+\subsubsection{动作 10 --- 害羞}
+\begin{itemize}
+    \item 黑脸（Param101）+ 低头 + 眼神躲闪
+    \item 害羞微笑 + 眯眼 + 身体扭捏
+    \item 3.5s 完成
+\end{itemize}
 
-    void UpdateWindowPosition()
-    {
-        // 通过 Win32 API SetWindowPos 移动 Unity 窗口
-        // 使宠物始终跟随鼠标
-    }
-}
+\subsection{眨眼系统}
+
+\begin{itemize}
+    \item 间隔随机 2-5s 一次
+    \item 使用 $|\sin(20t)|$ 快速闭眼睁眼（0.15s）
+    \item 通过 ParamEyeLOpen / ROpen 控制
+\end{itemize}
+
+\subsection{呼吸与微动}
+
+使用 Perlin 噪声实现自然微动：
+\begin{itemize}
+    \item 呼吸：ParamBreath = PerlinNoise(phase, 0) $\times$ 0.4
+    \item 身体晃动：3 轴 Perlin 噪声 $\times$ 幅度常量
+    \item 头部微动：2 轴 Perlin 噪声 $\times$ 0.6/0.4
+    \item 眼球浮动：2 轴 Perlin 噪声 $\times$ 3/2
+\end{itemize}
+
+% ═══════════════════════════════════════════
+\section{目录结构}
+% ═══════════════════════════════════════════
+
+\begin{lstlisting}[frame=single,numbers=none,style=csharp]
+Desktop_per_pro/
++-- README.md                              # 项目说明
++-- project_brief/
+|   +-- report.pdf                         # 本文档 (PDF)
+|   +-- report.tex                         # 本文档 (LaTeX)
++-- code/desktop unity/
+    +-- desktop unity.sln                  # Visual Studio 解决方案
+    +-- Assets/
+    |   +-- Scenes/
+    |   |   +-- scene.scene               # 主场景
+    |   +-- Scripts/
+    |   |   +-- DesktopPet.cs              # 主控 + 物理 + 状态机
+    |   |   +-- Live2DRenderer.cs          # Live2D 渲染 + 动画
+    |   |   +-- ContextMenu.cs             # 右键菜单 UI
+    |   |   +-- DragHandler.cs             # 拖拽/抛掷交互
+    |   |   +-- WindowOverlay.cs           # Win32 透明窗口
+    |   |   +-- HybridRenderer.cs          # 混合渲染管理器
+    |   |   +-- IPetRenderer.cs            # 渲染器接口
+    |   |   +-- Model3DRenderer.cs         # 3D 渲染器 (预留)
+    |   +-- Live2D/
+    |   |   +-- Models/Fuxuan/             # 符玄 Live2D 模型
+    |   +-- Plugins/                       # Cubism SDK
+    +-- Packages/
+    |   +-- manifest.json                  # Unity 包管理
+    +-- ProjectSettings/                   # Unity 项目设置
 \end{lstlisting}
 
-\subsection{WindowOverlay.cs --- 透明窗口管理}
+% ═══════════════════════════════════════════
+\section{开发指南}
+% ═══════════════════════════════════════════
 
-封装 Windows API 实现透明叠加和鼠标穿透。
+\subsection{调试快捷键}
 
-\begin{lstlisting}[style=csharp,caption={WindowOverlay.cs 骨架},label={lst:window}]
-using UnityEngine;
-using System.Runtime.InteropServices;
+\begin{itemize}
+    \item \texttt{1}：强制切换到 Live2D 渲染（HybridRenderer 调试用）
+    \item \texttt{2}：强制切换到 3D 渲染（HybridRenderer 调试用）
+    \item 控制台日志：各组件关键事件均有 Debug.Log 输出
+\end{itemize}
 
-public class WindowOverlay : MonoBehaviour
-{
-    [DllImport("user32.dll")]
-    static extern int SetWindowLong(System.IntPtr hWnd, int nIndex, int dwNewLong);
+\subsection{调参指南}
 
-    [DllImport("user32.dll")]
-    static extern int GetWindowLong(System.IntPtr hWnd, int nIndex);
+\begin{itemize}
+    \item \textbf{模型大小/位置}：修改 Live2DRenderer.cs 顶部的
+        \texttt{LIVE2D\_SCALE}（默认 200）和 \texttt{LIVE2D\_OFFSET\_Y}（默认 100）
+    \item \textbf{动作时长}：各动作对应的 \texttt{*\_DURATION} 常量
+    \item \textbf{权重调整}：通过右键菜单 UI 实时调整
+    \item \textbf{过渡平滑度}：\texttt{WALK\_FADE\_IN\_DURATION}（0.3s）、
+        \texttt{IDLE\_BLEND\_DURATION}（0.4s）
+    \item \textbf{物理}：DesktopPet.cs 顶部的重力/速度常量
+\end{itemize}
 
-    [DllImport("user32.dll")]
-    static extern bool SetWindowPos(System.IntPtr hWnd, System.IntPtr hWndInsertAfter,
-        int X, int Y, int cx, int cy, uint uFlags);
+\subsection{构建注意}
 
-    private const int GWL_EXSTYLE = -20;
-    private const int WS_EX_LAYERED = 0x80000;
-    private const int WS_EX_TRANSPARENT = 0x20;
-    private const int WS_EX_TOOLWINDOW = 0x80;
+\begin{itemize}
+    \item Camera Background 必须为 \#00FF00（色键透明色）
+    \item 构建版自动应用透明窗口设置（编辑器版不执行）
+    \item Live2D 模型需通过 Cubism SDK 导入生成 Prefab
+    \item 单例互斥锁防止 Build \& Run 产生多个实例
+\end{itemize}
 
-    private static readonly System.IntPtr HWND_TOPMOST = new System.IntPtr(-1);
-    private const uint SWP_NOMOVE = 0x0002;
-    private const uint SWP_NOSIZE = 0x0001;
-    private const uint SWP_SHOWWINDOW = 0x0040;
+% ═══════════════════════════════════════════
+\section{版本历史}
+% ═══════════════════════════════════════════
 
-    [Header("窗口设置")]
-    public bool enableClickThrough = false; // 是否启用鼠标穿透
+\begin{table}[H]
+\centering
+\caption{版本历史}
+\label{tab:history}
+\begin{tabular}{cll}
+\toprule
+\textbf{日期} & \textbf{版本} & \textbf{变更} \\
+\midrule
+2025 & v0.1 & 透明窗口 + 基础物理 + Live2D 加载 \\
+2025 & v0.2 & 地面状态机 + 走路动画 \\
+2025 & v0.3 & 10 种空闲动作 + 强制动作系统 \\
+2025 & v0.4 & 右键菜单 UI + 权重编辑 \\
+2025 & v0.5 & 动作锁定机制 + 走路淡入过渡 \\
+2026-06-13 & v0.6 & 本文档 + 项目文档整理 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-    void Start()
-    {
-        // 获取 Unity 窗口句柄并设置扩展样式
-#if UNITY_STANDALONE_WIN
-        System.IntPtr hWnd = GetUnityWindowHandle();
-
-        // 设置分层 + 工具窗口（不在任务栏显示）
-        int exStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
-        exStyle |= WS_EX_LAYERED | WS_EX_TOOLWINDOW;
-        SetWindowLong(hWnd, GWL_EXSTYLE, exStyle);
-
-        // 强制置顶
-        SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-#endif
-    }
-
-    void Update()
-    {
-        // 定时重新置顶（防止被任务栏遮挡）
-        if (Time.frameCount % 300 == 0)
-        {
-            ForceTopmost();
-        }
-    }
-
-    public void SetClickThrough(bool enabled)
-    {
-#if UNITY_STANDALONE_WIN
-        System.IntPtr hWnd = GetUnityWindowHandle();
-        int exStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
-        if (enabled)
-            exStyle |= WS_EX_TRANSPARENT;   // 添加穿透
-        else
-            exStyle &= ~WS_EX_TRANSPARENT;  // 移除穿透
-        SetWindowLong(hWnd, GWL_EXSTYLE, exStyle);
-        enableClickThrough = enabled;
-#endif
-    }
-
-    void ForceTopmost()
-    {
-#if UNITY_STANDALONE_WIN
-        System.IntPtr hWnd = GetUnityWindowHandle();
-        SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE);
-#endif
-    }
-
-    System.IntPtr GetUnityWindowHandle()
-    {
-        // 通过 User32.dll 找到 Unity 窗口
-        return System.Diagnostics.Process.GetCurrentProcess().MainWindowHandle;
-    }
-}
-\end{lstlisting}
-
-\subsection{TouchController.cs --- 点击反馈}
+\end{document}
 
 检测鼠标点击模型时的反馈逻辑。
 
