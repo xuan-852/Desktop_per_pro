@@ -23,6 +23,11 @@ code/desktop unity/*.svd
 file/
 
 # ================
+# Live2D 模型（不放在 StreamingAssets 下）
+# ================
+code/desktop unity/Assets/StreamingAssets/Live2D/
+
+# ================
 # macOS
 # ================
 .DS_Store
