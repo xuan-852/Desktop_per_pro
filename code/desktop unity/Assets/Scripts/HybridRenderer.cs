@@ -36,13 +36,17 @@ public class HybridRenderer : MonoBehaviour, IPetRenderer
     private void Start()
     {
         if (live2DRenderer == null) live2DRenderer = GetComponent<Live2DRenderer>();
-        if (model3DRenderer == null) model3DRenderer = GetComponent<Model3DRenderer>();
-
-        if (live2DRenderer == null || model3DRenderer == null)
+        if (live2DRenderer == null)
         {
-            Debug.LogError("[HybridRenderer] 需要 Live2DRenderer 和 Model3DRenderer 两个组件");
-            enabled = false;
-            return;
+            live2DRenderer = gameObject.AddComponent<Live2DRenderer>();
+            Debug.Log("[HybridRenderer] 自动添加了 Live2DRenderer");
+        }
+
+        if (model3DRenderer == null) model3DRenderer = GetComponent<Model3DRenderer>();
+        if (model3DRenderer == null)
+        {
+            model3DRenderer = gameObject.AddComponent<Model3DRenderer>();
+            Debug.Log("[HybridRenderer] 自动添加了 Model3DRenderer");
         }
 
         live2DRenderer.SetAlpha(1f);

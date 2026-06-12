@@ -201,17 +201,34 @@ public class DesktopPet : MonoBehaviour
             Debug.Log("[DesktopPet] 自动添加了 DragHandler 组件");
         }
 
-        // 获取渲染器引用：使用 Live2DRenderer
-        var live2d = GetComponent<Live2DRenderer>();
-        if (live2d != null)
+        // 自动确保 HybridRenderer 存在
+        if (GetComponent<HybridRenderer>() == null)
         {
-            _renderer = live2d;
-            Debug.Log("[DesktopPet] 使用 Live2DRenderer");
+            gameObject.AddComponent<HybridRenderer>();
+            Debug.Log("[DesktopPet] 自动添加了 HybridRenderer 组件");
+        }
+
+        // 获取渲染器引用：优先使用 HybridRenderer
+        var hybrid = GetComponent<HybridRenderer>();
+        if (hybrid != null)
+        {
+            _renderer = hybrid;
+            Debug.Log("[DesktopPet] 使用 HybridRenderer（Live2D + 3D 混合）");
         }
         else
         {
-            Debug.LogError("[DesktopPet] 场景中未找到 Live2DRenderer 组件，请添加");
-            enabled = false;
+            // 降级：单独使用 Live2DRenderer
+            var live2d = GetComponent<Live2DRenderer>();
+            if (live2d != null)
+            {
+                _renderer = live2d;
+                Debug.Log("[DesktopPet] 使用 Live2DRenderer（降级模式）");
+            }
+            else
+            {
+                Debug.LogError("[DesktopPet] 未找到任何渲染器组件 (HybridRenderer/Live2DRenderer)");
+                enabled = false;
+            }
         }
 
         Debug.Log($"[DesktopPet] 初始化完成 @ ({petX},{petY}), 屏幕: {Screen.width}x{Screen.height}");

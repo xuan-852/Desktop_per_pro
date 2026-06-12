@@ -3,6 +3,14 @@ using Live2D.Cubism.Framework;
 using Live2D.Cubism.Framework.Physics;
 using UnityEngine;
 
+// ===================================================================
+//  调大小 → 改下面三个数值即可（改完保存，Unity 自动重编译）
+// ===================================================================
+//  模型缩放:     LIVE2D_SCALE      (默认 200, 改小→变小)
+//  垂直偏移:     LIVE2D_OFFSET_Y   (默认 250, 正=下移, 负=上移)
+//  相机远近:     (由 Camera 控制，无需在此调整)
+// ===================================================================
+
 /// <summary>
 /// Live2D 渲染器 — 用 Cubism SDK 渲染符玄 Live2D 模型
 ///
@@ -14,7 +22,14 @@ using UnityEngine;
 [RequireComponent(typeof(DesktopPet))]
 public class Live2DRenderer : MonoBehaviour, IPetRenderer
 {
-    // ================ 可调参数（改这里）================
+    // ===================================================================
+    // ===== 🎛️ 调参区 — 改这里 =====
+    // ===================================================================
+    const float LIVE2D_SCALE       = 1f;    // 模型缩放（越大→模型越大）
+    const float LIVE2D_OFFSET_Y    = 250f;    // 垂直偏移（正数=下移，负数=上移）
+    // ===================================================================
+
+    // ================ 动画参数 ================
     // -- 空闲待机 --
     const float BREATH_AMPLITUDE   = 0.4f;    // 呼吸幅度
     const float BODY_SWAY_X        = 10.0f;  // 身体左右摆
@@ -57,15 +72,15 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     const float CLICK_LOCK_TIME    = 1.0f;   // 点击姿势锁定秒数
     // ==================================================
     [Header("模型 Prefab")]
-    [Tooltip("Cubism SDK 导入后生成的模型 Prefab（拖拽到这里）")]
+    [Tooltip("Cubism SDK 导入后生成的模型 Prefab（不拖也行，代码自动按路径加载）")]
     public GameObject modelPrefab;
 
-    [Header("显示设置")]
+    [Header("显示设置（改顶部 LIVE2D_SCALE / LIVE2D_OFFSET_Y 宏）")]
     [Tooltip("模型缩放")]
-    public float modelScale = 200f;
+    public float modelScale = LIVE2D_SCALE;
 
     [Tooltip("模型垂直偏移（像素）")]
-    public float verticalOffset = 250f;
+    public float verticalOffset = LIVE2D_OFFSET_Y;
 
     // Cubism 组件
     private GameObject _modelRoot;
@@ -110,12 +125,28 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     {
         _pet = GetComponent<DesktopPet>();
 
-        // 注意：已移除 modelScale 的自动重置逻辑，允许用户在 Inspector 中设置任意值
+        // ★ 强制从宏读取（忽略场景中序列化的旧值，改宏立即生效）
+        modelScale = LIVE2D_SCALE;
+        verticalOffset = LIVE2D_OFFSET_Y;
+
         TryLoadModel();
     }
 
     private void TryLoadModel()
     {
+        // 如果没有拖拽 modelPrefab，自动按路径加载
+        if (modelPrefab == null)
+        {
+            modelPrefab = Resources.Load<GameObject>("Live2D/Models/Fuxuan/符玄");
+        }
+        // 如果 Resources.Load 也没找到，尝试 Assets 路径
+        if (modelPrefab == null)
+        {
+            #if UNITY_EDITOR
+            modelPrefab = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Live2D/Models/Fuxuan/符玄.prefab");
+            #endif
+        }
+
         if (modelPrefab != null)
         {
             _modelRoot = Instantiate(modelPrefab, transform);
@@ -461,4 +492,21 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     }
 
     #endregion
+
+    /// <summary>
+    /// 设置模型透明度（HybridRenderer 交叉淡入淡出用）
+    /// </summary>
+    public void SetAlpha(float alpha)
+    {
+        if (_modelRoot == null) return;
+        var renderers = _modelRoot.GetComponentsInChildren<Renderer>(true);
+        foreach (var r in renderers)
+        {
+            // Live2D Cubism shader 没有 _Color 属性，跳过
+            if (!r.material.HasProperty("_Color")) continue;
+            Color c = r.material.color;
+            c.a = Mathf.Clamp01(alpha);
+            r.material.color = c;
+        }
+    }
 }

@@ -1,5 +1,13 @@
 using UnityEngine;
 
+// ===================================================================
+//  调大小 → 改下面三个数值即可（改完保存，Unity 自动重编译）
+// ===================================================================
+//  模型缩放:     MODEL3D_SCALE     (默认 0.01, 改大→变大)
+//  垂直偏移:     MODEL3D_OFFSET_Y  (默认 50,   正=下移, 负=上移)
+//  相机大小:     MODEL3D_ORTHO     (默认 5,    改大→画面显小)
+// ===================================================================
+
 /// <summary>
 /// 3D 模型渲染器 — 用 Unity Animator 控制符玄 3D 模型
 /// 负责走路、飞行等需要骨骼动画的动作
@@ -13,22 +21,26 @@ using UnityEngine;
 public class Model3DRenderer : MonoBehaviour, IPetRenderer
 {
     // ===================================================================
-    // ===== 调参区 — 你只需要改这里的数值 =====
+    // ===== 🎛️ 调参区 — 改这里 =====
+    // ===================================================================
+    const float MODEL3D_SCALE      = 1f;   // 模型缩放（越大→模型越大）
+    const float MODEL3D_OFFSET_Y   = 50f;     // 垂直偏移（正数=下移，负数=上移）
+    const float MODEL3D_ORTHO      = 50f;      // 相机大小（越大→画面里东西越小）
     // ===================================================================
 
     [Header("模型 Prefab")]
     [Tooltip("FuXuan.fbx 生成的预制体（拖拽到这里）")]
     public GameObject modelPrefab;
 
-    [Header("🔧 显示调整")]
+    [Header("🔧 显示调整（改顶部 MODEL3D_ 宏）")]
     [Tooltip("模型整体大小 | 太大→改小 | 太小→改大")]
-    public float modelScale = 0.01f;
+    public float modelScale = MODEL3D_SCALE;
 
     [Tooltip("模型上下位置偏移（像素，正=下移，负=上移）")]
-    public float verticalOffset = 50f;
+    public float verticalOffset = MODEL3D_OFFSET_Y;
 
     [Tooltip("相机远近：越小模型显得越大，越大模型显得越小")]
-    public float orthoSize = 5f;
+    public float orthoSize = MODEL3D_ORTHO;
 
     // ===================================================================
     // ===== 下面的不用改 =====
@@ -46,6 +58,12 @@ public class Model3DRenderer : MonoBehaviour, IPetRenderer
     private void Start()
     {
         _pet = GetComponent<DesktopPet>();
+
+        // ★ 强制从宏读取（忽略场景中序列化的旧值，改宏立即生效）
+        modelScale = MODEL3D_SCALE;
+        verticalOffset = MODEL3D_OFFSET_Y;
+        orthoSize = MODEL3D_ORTHO;
+
         SetupCameraAndLighting();
         TryLoadModel();
     }
