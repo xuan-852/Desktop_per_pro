@@ -1,0 +1,12 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^\\$tp = Get-Process Tuanjie -ErrorAction SilentlyContinue \\| Select-Object -ExpandProperty Id\nWrite-Output \"=== Tuanjie PID: \\$tp ===\"\n\\$cb = \\[WinAPI\\+EnumWindowsProc\\]\\{ param\\(\\$a,\\$b\\)\n    \\$w=0; \\[WinAPI\\]::GetWindowThreadProcessId\\(\\$a,\\[ref\\]\\$w\\)\n    if\\(\\$w -eq \\$tp -and \\[WinAPI\\]::IsWindowVisible\\(\\$a\\)\\)\\{\n        \\$s=New-Object Text\\.StringBuilder 512\n        \\[WinAPI\\]::GetWindowTextW\\(\\$a,\\$s,512\\)\n        \\$t=\\$s\\.ToString\\(\\)\\.Trim\\(\\)\n        if\\(\\$t\\)\\{Write-Output \"'\\$t' \\('\\$a'\\)\"\\}\n    \\}; \\$true\n\\}\n\\[WinAPI\\]::EnumWindows\\(\\$cb,0\\)\\|Out-Null$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^# Get the new editor's version info\n\\$editor = \"D:\\\\Unity\\\\editor\\\\2022\\.3\\.62t9\\\\Editor\"\n# Check if there's a version file\nif \\(Test-Path \"\\$editor\\\\Data\\\\Unity\\.exe\"\\) \\{\n    # Check the exe details\n    \\$info = Get-Item \"\\$editor\\\\Data\\\\Unity\\.exe\"\n    Write-Output \"Unity\\.exe product version: \\$\\(\\$info\\.VersionInfo\\.ProductVersion\\)\"\n\\} elseif \\(Test-Path \"\\$editor\\\\Tuanjie\\.exe\"\\) \\{\n    \\$info = Get-Item \"\\$editor\\\\Tuanjie\\.exe\"\n    Write-Output \"Tuanjie\\.exe product version: \\$\\(\\$info\\.VersionInfo\\.ProductVersion\\)\"\n\\}\n\n# Also check the Data folder for version info\nif \\(Test-Path \"\\$editor\\\\Data\"\\) \\{\n    Get-ChildItem \"\\$editor\\\\Data\" -Filter \"\\*\\.version\" -ErrorAction SilentlyContinue\n    Get-ChildItem \"\\$editor\\\\Data\" -Filter \"\\*version\\*\" -ErrorAction SilentlyContinue\n    Get-ChildItem \"\\$editor\\\\Data\" -Filter \"version\\*\" -ErrorAction SilentlyContinue\n\\}$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

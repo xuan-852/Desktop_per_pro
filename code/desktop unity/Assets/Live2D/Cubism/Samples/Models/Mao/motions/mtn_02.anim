@@ -12102,7 +12102,7 @@ AnimationClip:
     data: 
     objectReferenceParameter: {fileID: 0}
     floatParameter: 0
-    intParameter: 40528
+    intParameter: 27044
     messageOptions: 1
   m_Intervals: []
   m_ACLContext:
