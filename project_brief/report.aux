@@ -1,63 +1,76 @@
 \relax 
 \providecommand\hyper@newdestlabel[2]{}
-\providecommand*\HyPL@Entry[1]{}
-\HyPL@Entry{0<</S/D>>}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
 \@writefile{toc}{\contentsline {section}{\numberline {1}项目概述}{3}{section.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {1.1}项目背景}{3}{subsection.1.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {1.2}项目目标}{3}{subsection.1.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {1.3}开发环境}{3}{subsection.1.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {2}新旧架构对比}{4}{section.2}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces GDI+ 方案 vs Unity 方案对比}}{4}{table.caption.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.2}技术栈}{3}{subsection.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.3}项目状态}{3}{subsection.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}系统架构}{4}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}整体架构}{4}{subsection.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}组件依赖关系}{4}{subsection.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}窗口管理 (WindowOverlay)}{4}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}色键透明原理}{4}{subsection.3.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}点击穿透 (Click-Through)}{5}{subsection.3.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}窗口样式}{5}{subsection.3.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}物理引擎 (DesktopPet)}{5}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}坐标系}{5}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}物理参数}{5}{subsection.4.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces 核心物理常量}}{5}{table.caption.2}\protected@file@percent }
 \providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
-\newlabel{tab:compare}{{1}{4}{GDI+ 方案 vs Unity 方案对比}{table.caption.2}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {3}技术架构}{4}{section.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}整体架构}{4}{subsection.3.1}\protected@file@percent }
-\citation{TransparentWindow}
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}透明窗口实现}{5}{subsection.3.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}模型渲染管线}{5}{subsection.3.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}进程间通信（可选）}{6}{subsection.3.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {4}关键脚本设计}{6}{section.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}DesktopPet.cs --- 宠物主控}{6}{subsection.4.1}\protected@file@percent }
-\newlabel{lst:desktoppet}{{1}{6}{DesktopPet.cs 骨架}{lstlisting.1}{}}
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {1}{\ignorespaces DesktopPet.cs 骨架}}{6}{lstlisting.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}DragHandler.cs --- 拖拽交互}{8}{subsection.4.2}\protected@file@percent }
-\newlabel{lst:drag}{{2}{8}{DragHandler.cs 骨架}{lstlisting.2}{}}
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {2}{\ignorespaces DragHandler.cs 骨架}}{8}{lstlisting.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}WindowOverlay.cs --- 透明窗口管理}{10}{subsection.4.3}\protected@file@percent }
-\newlabel{lst:window}{{3}{10}{WindowOverlay.cs 骨架}{lstlisting.3}{}}
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {3}{\ignorespaces WindowOverlay.cs 骨架}}{10}{lstlisting.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}TouchController.cs --- 点击反馈}{12}{subsection.4.4}\protected@file@percent }
-\newlabel{lst:touch}{{4}{12}{TouchController.cs 骨架}{lstlisting.4}{}}
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {4}{\ignorespaces TouchController.cs 骨架}}{12}{lstlisting.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {5}行走动画设计原理}{13}{section.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}核心哲学}{13}{subsection.5.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}四大关键姿势}{14}{subsection.5.2}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces 行走循环四大关键姿势}}{14}{table.caption.4}\protected@file@percent }
-\newlabel{tab:walkcycle}{{2}{14}{行走循环四大关键姿势}{table.caption.4}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}垂直弹跳相位}{14}{subsection.5.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}手臂与腿的交叉对位}{14}{subsection.5.4}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces 手臂-腿交替关系}}{15}{table.caption.5}\protected@file@percent }
-\newlabel{tab:armleg}{{3}{15}{手臂-腿交替关系}{table.caption.5}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}身体前倾与速度}{15}{subsection.5.5}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces 行走类型与前倾角度}}{15}{table.caption.6}\protected@file@percent }
-\newlabel{tab:lean}{{4}{15}{行走类型与前倾角度}{table.caption.6}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.6}头部运动}{15}{subsection.5.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.7}Live2D 参数映射}{15}{subsection.5.7}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces 行走动画 $\to $ Live2D 参数映射}}{16}{table.caption.7}\protected@file@percent }
-\newlabel{tab:mapping}{{5}{16}{行走动画 $\to $ Live2D 参数映射}{table.caption.7}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {5.8}常见错误}{16}{subsection.5.8}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {6}实施路线}{16}{section.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}第一阶段：环境搭建（第 1 天）}{17}{subsection.6.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}第二阶段：模型导入（第 2--3 天）}{17}{subsection.6.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}第三阶段：交互实现（第 4--6 天）}{17}{subsection.6.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.4}第四阶段：集成与优化（第 7--10 天）}{17}{subsection.6.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {7}模型获取方案}{18}{section.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {8}Live2D 过渡预留}{18}{section.8}\protected@file@percent }
-\newlabel{lst:interface}{{5}{18}{渲染接口抽象（预留）}{lstlisting.5}{}}
-\@writefile{lol}{\contentsline {lstlisting}{\numberline {5}{\ignorespaces 渲染接口抽象（预留）}}{18}{lstlisting.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {9}目录结构规划}{19}{section.9}\protected@file@percent }
-\bibcite{TransparentWindow}{1}
-\bibcite{HoyoModels}{2}
-\bibcite{SRImporter}{3}
-\bibcite{PetOriginal}{4}
-\gdef \@abspage@last{20}
+\newlabel{tab:physics}{{1}{5}{核心物理常量}{table.caption.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}地面任务状态机}{5}{subsection.4.3}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces GroundTask 状态机}}{6}{table.caption.3}\protected@file@percent }
+\newlabel{tab:tasks}{{2}{6}{GroundTask 状态机}{table.caption.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}暂停/恢复机制}{6}{subsection.4.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}Live2D 渲染器 (Live2DRenderer)}{6}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}概述}{6}{subsection.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}生命周期}{6}{subsection.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}参数驱动系统}{7}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}空闲动作系统}{7}{subsection.5.4}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces 空闲动作列表}}{7}{table.caption.4}\protected@file@percent }
+\newlabel{tab:idle}{{3}{7}{空闲动作列表}{table.caption.4}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces 空闲动作权重}}{8}{table.caption.5}\protected@file@percent }
+\newlabel{tab:idle-weights}{{4}{8}{空闲动作权重}{table.caption.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}走路动画}{8}{subsection.5.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.6}体态过渡}{8}{subsection.5.6}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces 过渡参数}}{8}{table.caption.6}\protected@file@percent }
+\newlabel{tab:blend}{{5}{8}{过渡参数}{table.caption.6}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.7}强制动作锁定机制}{9}{subsection.5.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}交互系统 (DragHandler)}{9}{section.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}左键拖拽}{9}{subsection.6.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}右键菜单}{9}{subsection.6.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}点击穿透管理}{10}{subsection.6.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}上下文菜单 (ContextMenu)}{10}{section.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}UI 实现}{10}{subsection.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.2}功能区域}{10}{subsection.7.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.3}动作执行流程}{10}{subsection.7.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {8}混合渲染 (HybridRenderer)}{11}{section.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.1}设计目标}{11}{subsection.8.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.2}切换规则}{11}{subsection.8.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {8.3}接口设计}{11}{subsection.8.3}\protected@file@percent }
+\newlabel{lst:ipet}{{1}{11}{IPetRenderer 接口}{lstlisting.1}{}}
+\@writefile{lol}{\contentsline {lstlisting}{\numberline {1}{\ignorespaces IPetRenderer 接口}}{11}{lstlisting.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {9}动画详述}{12}{section.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.1}空闲动作详解}{12}{subsection.9.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {9.1.1}动作 1 --- 歪头}{12}{subsubsection.9.1.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {9.1.2}动作 2 --- 微笑}{12}{subsubsection.9.1.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {9.1.3}动作 3 --- 挑眉}{12}{subsubsection.9.1.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {9.1.4}动作 4 --- 星辉环绕}{12}{subsubsection.9.1.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {9.1.5}动作 5 --- 伸懒腰}{12}{subsubsection.9.1.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {9.1.6}动作 6 --- 爱心眼}{13}{subsubsection.9.1.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {9.1.7}动作 7 --- 数钱}{13}{subsubsection.9.1.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {9.1.8}动作 8 --- 委屈}{13}{subsubsection.9.1.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {9.1.9}动作 9 --- 法阵显现}{13}{subsubsection.9.1.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {9.1.10}动作 10 --- 害羞}{13}{subsubsection.9.1.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.2}眨眼系统}{14}{subsection.9.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {9.3}呼吸与微动}{14}{subsection.9.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {10}目录结构}{14}{section.10}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {11}开发指南}{14}{section.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.1}调试快捷键}{14}{subsection.11.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.2}调参指南}{15}{subsection.11.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {11.3}构建注意}{15}{subsection.11.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {12}版本历史}{15}{section.12}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces 版本历史}}{15}{table.caption.7}\protected@file@percent }
+\newlabel{tab:history}{{6}{15}{版本历史}{table.caption.7}{}}
+\gdef \@abspage@last{15}

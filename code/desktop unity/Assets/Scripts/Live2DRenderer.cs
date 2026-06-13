@@ -156,7 +156,8 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     private float _idleActionTime = 0f;
     private float _idleActionInterval = 8f;
     private int _currentIdleAction = 0; // 0=无, 1=歪头, 2=微笑, 3=挑眉, 4=星辉, 5=伸懒腰, 6=爱心眼, 7=数钱, 8=委屈, 9=法阵, 10=害羞
-    private int _nextIdleAction = 1;    // 下一个要播放的动作编号（循环用）
+    // 各动作权重（对应动作 1-10），值越大出现概率越高
+    private readonly int[] _idleActionWeights = new int[] { 5, 5, 3, 2, 2, 3, 2, 3, 1, 3 };
     // 复合动作相位（用于多参数协同插值）
     private float _complexActionPhase = 0f;
 
@@ -396,18 +397,16 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("ParamEyeBallX", eyeX);
         SetParameter("ParamEyeBallY", eyeY);
 
-        // === 顺序测试动作（循环 1→2→3→4→5→6→7→8→9→10）===
+        // === 空闲动作：加权随机选取（权重越高越容易出现）===
         // 动作: 1=歪头, 2=微笑, 3=挑眉, 4=星辉, 5=伸懒腰, 6=爱心眼, 7=数钱, 8=委屈, 9=法阵, 10=害羞
 
         // ★ 暂停时（菜单打开），不播新动作
         bool isPaused = (_pet != null && _pet.isPaused);
 
-        // 当前动作结束后，触发下一个
+        // 当前动作结束后，加权随机选取下一个
         if (_currentIdleAction == 0 && !isPaused)
         {
-            _currentIdleAction = _nextIdleAction;
-            _nextIdleAction++;
-            if (_nextIdleAction > 10) _nextIdleAction = 1;
+            _currentIdleAction = PickWeightedIdleAction();
             _idleActionTime = 0f;
             _complexActionPhase = 0f;
             Debug.Log($"[Live2DRenderer] ▶ 动作 #{_currentIdleAction}");
@@ -878,11 +877,29 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         if (!_loaded || _cubismModel == null) return;
         _actionLocked = true;
         _currentIdleAction = actionId;
-        _nextIdleAction = actionId + 1;
-        if (_nextIdleAction > 10) _nextIdleAction = 1;
         _idleActionTime = 0f;
         _complexActionPhase = 0f;
         Debug.Log($"[Live2DRenderer] ▶ 强制动作 #{actionId}（锁定，不被走路覆盖）");
+    }
+
+    /// <summary>
+    /// 按权重随机选取一个空闲动作（1-10）
+    /// </summary>
+    private int PickWeightedIdleAction()
+    {
+        int totalWeight = 0;
+        for (int i = 0; i < _idleActionWeights.Length; i++)
+            totalWeight += _idleActionWeights[i];
+
+        int roll = Random.Range(0, totalWeight);
+        int cumulative = 0;
+        for (int i = 0; i < _idleActionWeights.Length; i++)
+        {
+            cumulative += _idleActionWeights[i];
+            if (roll < cumulative)
+                return i + 1; // 动作编号从 1 开始
+        }
+        return 1; // fallback
     }
 
     /// <summary>

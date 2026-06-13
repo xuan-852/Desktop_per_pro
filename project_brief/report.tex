@@ -317,7 +317,31 @@ StopTime      & 6   & 停止随机时长 (6-15s) \\
 \end{table}
 
 每个动作使用缓入缓出曲线 $f(t)=\sin(t\pi)$，其中 $t\in[0,1]$。
-动作结束时调用 \texttt{ResetIdleAction()} 清理参数并播放下一个。
+动作结束时调用 \texttt{ResetIdleAction()} 清理参数。
+
+\textbf{选择策略}：每次播放完，通过加权随机选取下一个。各动作权重可调：
+
+\begin{table}[H]
+\centering
+\caption{空闲动作权重}
+\label{tab:idle-weights}
+\begin{tabular}{lcc}
+\toprule
+\textbf{动作} & \textbf{权重} & \textbf{相对概率} \\
+\midrule
+歪头   & 5 & 17.9\% \\
+微笑   & 5 & 17.9\% \\
+挑眉   & 3 & 10.7\% \\
+星辉   & 2 & 7.1\% \\
+伸懒腰 & 2 & 7.1\% \\
+爱心   & 3 & 10.7\% \\
+数钱   & 2 & 7.1\% \\
+委屈   & 3 & 10.7\% \\
+法阵   & 1 & 3.6\% \\
+害羞   & 3 & 10.7\% \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \textbf{暂停时}：\texttt{isPaused = true} 时不播新动作（菜单打开时冻结动作循环）。
 

@@ -1,32 +1,56 @@
 \contentsline {section}{\numberline {1}项目概述}{3}{section.1}%
 \contentsline {subsection}{\numberline {1.1}项目背景}{3}{subsection.1.1}%
-\contentsline {subsection}{\numberline {1.2}项目目标}{3}{subsection.1.2}%
-\contentsline {subsection}{\numberline {1.3}开发环境}{3}{subsection.1.3}%
-\contentsline {section}{\numberline {2}新旧架构对比}{4}{section.2}%
-\contentsline {section}{\numberline {3}技术架构}{4}{section.3}%
-\contentsline {subsection}{\numberline {3.1}整体架构}{4}{subsection.3.1}%
-\contentsline {subsection}{\numberline {3.2}透明窗口实现}{5}{subsection.3.2}%
-\contentsline {subsection}{\numberline {3.3}模型渲染管线}{5}{subsection.3.3}%
-\contentsline {subsection}{\numberline {3.4}进程间通信（可选）}{6}{subsection.3.4}%
-\contentsline {section}{\numberline {4}关键脚本设计}{6}{section.4}%
-\contentsline {subsection}{\numberline {4.1}DesktopPet.cs --- 宠物主控}{6}{subsection.4.1}%
-\contentsline {subsection}{\numberline {4.2}DragHandler.cs --- 拖拽交互}{8}{subsection.4.2}%
-\contentsline {subsection}{\numberline {4.3}WindowOverlay.cs --- 透明窗口管理}{10}{subsection.4.3}%
-\contentsline {subsection}{\numberline {4.4}TouchController.cs --- 点击反馈}{12}{subsection.4.4}%
-\contentsline {section}{\numberline {5}行走动画设计原理}{13}{section.5}%
-\contentsline {subsection}{\numberline {5.1}核心哲学}{13}{subsection.5.1}%
-\contentsline {subsection}{\numberline {5.2}四大关键姿势}{14}{subsection.5.2}%
-\contentsline {subsection}{\numberline {5.3}垂直弹跳相位}{14}{subsection.5.3}%
-\contentsline {subsection}{\numberline {5.4}手臂与腿的交叉对位}{14}{subsection.5.4}%
-\contentsline {subsection}{\numberline {5.5}身体前倾与速度}{15}{subsection.5.5}%
-\contentsline {subsection}{\numberline {5.6}头部运动}{15}{subsection.5.6}%
-\contentsline {subsection}{\numberline {5.7}Live2D 参数映射}{15}{subsection.5.7}%
-\contentsline {subsection}{\numberline {5.8}常见错误}{16}{subsection.5.8}%
-\contentsline {section}{\numberline {6}实施路线}{16}{section.6}%
-\contentsline {subsection}{\numberline {6.1}第一阶段：环境搭建（第 1 天）}{17}{subsection.6.1}%
-\contentsline {subsection}{\numberline {6.2}第二阶段：模型导入（第 2--3 天）}{17}{subsection.6.2}%
-\contentsline {subsection}{\numberline {6.3}第三阶段：交互实现（第 4--6 天）}{17}{subsection.6.3}%
-\contentsline {subsection}{\numberline {6.4}第四阶段：集成与优化（第 7--10 天）}{17}{subsection.6.4}%
-\contentsline {section}{\numberline {7}模型获取方案}{18}{section.7}%
-\contentsline {section}{\numberline {8}Live2D 过渡预留}{18}{section.8}%
-\contentsline {section}{\numberline {9}目录结构规划}{19}{section.9}%
+\contentsline {subsection}{\numberline {1.2}技术栈}{3}{subsection.1.2}%
+\contentsline {subsection}{\numberline {1.3}项目状态}{3}{subsection.1.3}%
+\contentsline {section}{\numberline {2}系统架构}{4}{section.2}%
+\contentsline {subsection}{\numberline {2.1}整体架构}{4}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}组件依赖关系}{4}{subsection.2.2}%
+\contentsline {section}{\numberline {3}窗口管理 (WindowOverlay)}{4}{section.3}%
+\contentsline {subsection}{\numberline {3.1}色键透明原理}{4}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}点击穿透 (Click-Through)}{5}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}窗口样式}{5}{subsection.3.3}%
+\contentsline {section}{\numberline {4}物理引擎 (DesktopPet)}{5}{section.4}%
+\contentsline {subsection}{\numberline {4.1}坐标系}{5}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}物理参数}{5}{subsection.4.2}%
+\contentsline {subsection}{\numberline {4.3}地面任务状态机}{5}{subsection.4.3}%
+\contentsline {subsection}{\numberline {4.4}暂停/恢复机制}{6}{subsection.4.4}%
+\contentsline {section}{\numberline {5}Live2D 渲染器 (Live2DRenderer)}{6}{section.5}%
+\contentsline {subsection}{\numberline {5.1}概述}{6}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}生命周期}{6}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}参数驱动系统}{7}{subsection.5.3}%
+\contentsline {subsection}{\numberline {5.4}空闲动作系统}{7}{subsection.5.4}%
+\contentsline {subsection}{\numberline {5.5}走路动画}{8}{subsection.5.5}%
+\contentsline {subsection}{\numberline {5.6}体态过渡}{8}{subsection.5.6}%
+\contentsline {subsection}{\numberline {5.7}强制动作锁定机制}{9}{subsection.5.7}%
+\contentsline {section}{\numberline {6}交互系统 (DragHandler)}{9}{section.6}%
+\contentsline {subsection}{\numberline {6.1}左键拖拽}{9}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}右键菜单}{9}{subsection.6.2}%
+\contentsline {subsection}{\numberline {6.3}点击穿透管理}{10}{subsection.6.3}%
+\contentsline {section}{\numberline {7}上下文菜单 (ContextMenu)}{10}{section.7}%
+\contentsline {subsection}{\numberline {7.1}UI 实现}{10}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}功能区域}{10}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}动作执行流程}{10}{subsection.7.3}%
+\contentsline {section}{\numberline {8}混合渲染 (HybridRenderer)}{11}{section.8}%
+\contentsline {subsection}{\numberline {8.1}设计目标}{11}{subsection.8.1}%
+\contentsline {subsection}{\numberline {8.2}切换规则}{11}{subsection.8.2}%
+\contentsline {subsection}{\numberline {8.3}接口设计}{11}{subsection.8.3}%
+\contentsline {section}{\numberline {9}动画详述}{12}{section.9}%
+\contentsline {subsection}{\numberline {9.1}空闲动作详解}{12}{subsection.9.1}%
+\contentsline {subsubsection}{\numberline {9.1.1}动作 1 --- 歪头}{12}{subsubsection.9.1.1}%
+\contentsline {subsubsection}{\numberline {9.1.2}动作 2 --- 微笑}{12}{subsubsection.9.1.2}%
+\contentsline {subsubsection}{\numberline {9.1.3}动作 3 --- 挑眉}{12}{subsubsection.9.1.3}%
+\contentsline {subsubsection}{\numberline {9.1.4}动作 4 --- 星辉环绕}{12}{subsubsection.9.1.4}%
+\contentsline {subsubsection}{\numberline {9.1.5}动作 5 --- 伸懒腰}{12}{subsubsection.9.1.5}%
+\contentsline {subsubsection}{\numberline {9.1.6}动作 6 --- 爱心眼}{13}{subsubsection.9.1.6}%
+\contentsline {subsubsection}{\numberline {9.1.7}动作 7 --- 数钱}{13}{subsubsection.9.1.7}%
+\contentsline {subsubsection}{\numberline {9.1.8}动作 8 --- 委屈}{13}{subsubsection.9.1.8}%
+\contentsline {subsubsection}{\numberline {9.1.9}动作 9 --- 法阵显现}{13}{subsubsection.9.1.9}%
+\contentsline {subsubsection}{\numberline {9.1.10}动作 10 --- 害羞}{13}{subsubsection.9.1.10}%
+\contentsline {subsection}{\numberline {9.2}眨眼系统}{14}{subsection.9.2}%
+\contentsline {subsection}{\numberline {9.3}呼吸与微动}{14}{subsection.9.3}%
+\contentsline {section}{\numberline {10}目录结构}{14}{section.10}%
+\contentsline {section}{\numberline {11}开发指南}{14}{section.11}%
+\contentsline {subsection}{\numberline {11.1}调试快捷键}{14}{subsection.11.1}%
+\contentsline {subsection}{\numberline {11.2}调参指南}{15}{subsection.11.2}%
+\contentsline {subsection}{\numberline {11.3}构建注意}{15}{subsection.11.3}%
+\contentsline {section}{\numberline {12}版本历史}{15}{section.12}%
