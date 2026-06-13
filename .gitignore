@@ -47,3 +47,10 @@ code/desktop unity/*.VC.opendb
 # 日志
 # ================
 *.log
+
+# ================
+# LaTeX 构建产物
+# ================
+*.aux
+*.out
+*.toc
