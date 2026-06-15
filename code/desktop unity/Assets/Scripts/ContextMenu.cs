@@ -1,7 +1,9 @@
 using UnityEngine;
+using System.Collections.Generic;
 
 /// <summary>
-/// 右键上下文菜单 — 调整任务权重 + 强制播放动作
+/// 右键上下文菜单 — 分类标签布局
+/// 标签：设置 | 动作 | 聊天 | 调试
 ///
 /// 用 OnGUI 绘制，无需 Canvas/UIPrefab
 /// </summary>
@@ -10,17 +12,32 @@ public class ContextMenu : MonoBehaviour
     private DesktopPet _pet;
     private Live2DRenderer _renderer;
     private WindowOverlay _window;
+    private ChatManager _chat;
 
-    // 状态
+    // ===== 标签系统 =====
+    private enum Tab { 设置, 动作, 聊天, 调试 }
+    private Tab _currentTab = Tab.设置;
+    private string[] _tabNames = { "⚙ 设置", "▶ 动作", "💬 聊天", "🔧 调试" };
+
+    // ===== 菜单状态 =====
     private bool _isOpen = false;
     private Rect _menuRect;
-    private float _menuWidth = 280f;
-    private float _menuHeight = 370f;
-    private int _actionButtonCount = 5; // 每行按钮数
+    private float _menuWidth = 300f;
+    private float _menuHeight = 420f;
     private Vector2 _scrollPos = Vector2.zero;
 
-    // 权重编辑器副本（确认后写回）
+    // ===== 权重编辑器副本 =====
     private int _wLeftEdge, _wRightEdge, _wLeftTime, _wRightTime, _wStop;
+
+    // ===== 聊天 =====
+    private string _chatInputText = "";
+    private string _chatStatusMsg = "";
+    private Color _chatStatusColor = Color.gray;
+    private Vector2 _chatScrollPos = Vector2.zero;
+    private bool _chatShowConfig = false;
+
+    // ===== 调试信息 =====
+    private string _debugInfo = "";
 
     // ===== 样式 =====
     private GUIStyle _titleStyle;
@@ -29,10 +46,17 @@ public class ContextMenu : MonoBehaviour
     private GUIStyle _buttonStyle;
     private GUIStyle _smallButtonStyle;
     private GUIStyle _closeButtonStyle;
+    private GUIStyle _tabButtonStyle;
+    private GUIStyle _tabButtonActiveStyle;
+    private GUIStyle _textFieldStyle;
+    private GUIStyle _debugTextStyle;
     private Texture2D _bgTexture;
     private Texture2D _sectionBg;
     private Texture2D _btnBg;
     private Texture2D _btnSmallBg;
+    private Texture2D _tabBg;
+    private Texture2D _tabActiveBg;
+    private Texture2D _inputBg;
     private bool _stylesInitialized = false;
 
     void Start()
@@ -41,6 +65,14 @@ public class ContextMenu : MonoBehaviour
         _renderer = GetComponent<Live2DRenderer>();
         _window = GetComponent<WindowOverlay>();
         if (_window == null) _window = FindObjectOfType<WindowOverlay>();
+
+        // 聊天管理器
+        _chat = GetComponent<ChatManager>();
+        if (_chat == null) _chat = gameObject.AddComponent<ChatManager>();
+
+        // 自动聊天（定时问候 + 互动事件 + 气泡）
+        var autoChat = GetComponent<AutoChat>();
+        if (autoChat == null) gameObject.AddComponent<AutoChat>();
     }
 
     void InitStyles()
@@ -48,11 +80,13 @@ public class ContextMenu : MonoBehaviour
         if (_stylesInitialized) return;
         _stylesInitialized = true;
 
-        // 背景
         _bgTexture = MakeTex(1, 1, new Color(0.15f, 0.15f, 0.17f, 0.95f));
         _sectionBg = MakeTex(1, 1, new Color(0.12f, 0.12f, 0.14f, 0.9f));
         _btnBg = MakeTex(1, 1, new Color(0.25f, 0.25f, 0.28f, 1f));
         _btnSmallBg = MakeTex(1, 1, new Color(0.3f, 0.3f, 0.33f, 1f));
+        _tabBg = MakeTex(1, 1, new Color(0.2f, 0.2f, 0.22f, 1f));
+        _tabActiveBg = MakeTex(1, 1, new Color(0.35f, 0.25f, 0.4f, 1f));
+        _inputBg = MakeTex(1, 1, new Color(0.08f, 0.08f, 0.1f, 0.9f));
 
         _titleStyle = new GUIStyle
         {
@@ -103,6 +137,36 @@ public class ContextMenu : MonoBehaviour
             fontSize = 11,
             alignment = TextAnchor.MiddleCenter
         };
+
+        _tabButtonStyle = new GUIStyle(_buttonStyle)
+        {
+            normal = { textColor = new Color(0.7f, 0.7f, 0.7f), background = _tabBg },
+            fontSize = 11,
+            padding = new RectOffset(4, 4, 4, 4),
+            margin = new RectOffset(0, 0, 0, 0)
+        };
+
+        _tabButtonActiveStyle = new GUIStyle(_tabButtonStyle)
+        {
+            normal = { textColor = Color.white, background = _tabActiveBg },
+            fontStyle = FontStyle.Bold
+        };
+
+        _textFieldStyle = new GUIStyle(GUI.skin.textField)
+        {
+            normal = { textColor = Color.white, background = _inputBg },
+            fontSize = 11,
+            padding = new RectOffset(4, 4, 3, 3)
+        };
+
+        _debugTextStyle = new GUIStyle
+        {
+            normal = { textColor = new Color(0.5f, 0.8f, 0.5f) },
+            fontSize = 10,
+            fontStyle = FontStyle.Normal,
+            padding = new RectOffset(6, 0, 2, 2),
+            wordWrap = true
+        };
     }
 
     #region 公开接口
@@ -110,12 +174,14 @@ public class ContextMenu : MonoBehaviour
     public void Open(Vector2 screenPos)
     {
         _isOpen = true;
+        _currentTab = Tab.设置;   // 默认打开设置
+        _scrollPos = Vector2.zero;
 
-        // ★ 暂停宠物运动（右键菜单打开时不走路）
+        // ★ 暂停宠物运动
         if (_pet != null)
         {
-            _pet.ForceStop();    // 先清零 petVx，让走路动画停止
-            _pet.isPaused = true; // 再暂停物理状态机
+            _pet.ForceStop();
+            _pet.isPaused = true;
         }
 
         // 复制当前权重
@@ -125,23 +191,19 @@ public class ContextMenu : MonoBehaviour
         _wRightTime = _pet.taskWeightMoveRightTime;
         _wStop = _pet.taskWeightStopTime;
 
-        // 定位菜单（确保不超出屏幕）
+        // 定位菜单
         float x = Mathf.Clamp(screenPos.x, 10, Screen.width - _menuWidth - 10);
         float y = Mathf.Clamp(screenPos.y, 10, Screen.height - _menuHeight - 10);
         _menuRect = new Rect(x, y, _menuWidth, _menuHeight);
-
-        Debug.Log($"[ContextMenu] 打开 位置=({x},{y})");
     }
 
     public void Close()
     {
         _isOpen = false;
 
-        // 清除可能残留的回调（安全保底）
         if (_renderer != null)
             _renderer.OnForcedActionFinished -= OnForcedActionComplete;
 
-        // ★ 恢复宠物运动
         if (_pet != null)
         {
             _pet.isPaused = false;
@@ -150,34 +212,88 @@ public class ContextMenu : MonoBehaviour
     }
 
     public bool IsOpen => _isOpen;
-
-    /// <summary>鼠标是否在菜单区域内</summary>
-    public bool IsMouseOverMenu(Vector2 mousePos)
-    {
-        return _isOpen && _menuRect.Contains(mousePos);
-    }
+    public bool IsMouseOverMenu(Vector2 mousePos) => _isOpen && _menuRect.Contains(mousePos);
 
     #endregion
+
+    #region 主绘制循环
 
     void OnGUI()
     {
         if (!_isOpen) return;
         InitStyles();
 
-        // ===== 背景 =====
+        // 背景
         GUI.Box(_menuRect, GUIContent.none, new GUIStyle { normal = { background = _bgTexture } });
 
         GUILayout.BeginArea(_menuRect);
 
         // ===== 标题 =====
-        GUILayout.Label("✦ 符玄 · 行为设置", _titleStyle);
+        GUILayout.Label("✦ 符玄 · 控制面板", _titleStyle);
         GUILayout.Space(2);
 
-        _scrollPos = GUILayout.BeginScrollView(_scrollPos, false, true,
-            GUILayout.Width(_menuWidth), GUILayout.Height(_menuHeight - 55));
+        // ===== 标签栏 =====
+        DrawTabBar();
+        GUILayout.Space(4);
 
-        // ===== 权重设置 =====
-        GUILayout.Label("⚙ 权重设置", _sectionStyle);
+        // ===== 标签内容 =====
+        _scrollPos = GUILayout.BeginScrollView(_scrollPos, false, true,
+            GUILayout.Width(_menuWidth), GUILayout.Height(_menuHeight - 90));
+
+        switch (_currentTab)
+        {
+            case Tab.设置: DrawSettingsTab(); break;
+            case Tab.动作: DrawActionsTab(); break;
+            case Tab.聊天: DrawChatTab(); break;
+            case Tab.调试: DrawDebugTab(); break;
+        }
+
+        GUILayout.EndScrollView();
+
+        // ===== 底部关闭按钮 =====
+        GUILayout.FlexibleSpace();
+        GUILayout.BeginHorizontal();
+        GUILayout.FlexibleSpace();
+        if (GUILayout.Button("✕ 关闭", _closeButtonStyle, GUILayout.Width(80), GUILayout.Height(24)))
+            Close();
+        GUILayout.FlexibleSpace();
+        GUILayout.EndHorizontal();
+
+        GUILayout.EndArea();
+    }
+
+    /// <summary>绘制标签栏</summary>
+    private void DrawTabBar()
+    {
+        GUILayout.BeginHorizontal();
+        GUILayout.Space(4);
+
+        for (int i = 0; i < _tabNames.Length; i++)
+        {
+            bool isActive = ((int)_currentTab == i);
+            GUIStyle style = isActive ? _tabButtonActiveStyle : _tabButtonStyle;
+
+            if (GUILayout.Button(_tabNames[i], style, GUILayout.Height(26)))
+            {
+                if ((Tab)i != _currentTab)
+                {
+                    _currentTab = (Tab)i;
+                    _scrollPos = Vector2.zero;
+                }
+            }
+        }
+
+        GUILayout.Space(4);
+        GUILayout.EndHorizontal();
+    }
+
+    #endregion
+
+    #region 标签页: 设置
+
+    private void DrawSettingsTab()
+    {
+        GUILayout.Label("⚙ 任务权重", _sectionStyle);
         GUILayout.Space(2);
 
         DrawWeightRow("向左走到边缘", ref _wLeftEdge, 0, 10);
@@ -188,39 +304,334 @@ public class ContextMenu : MonoBehaviour
 
         GUILayout.Space(4);
 
-        // 应用权重按钮
         if (GUILayout.Button("✓ 应用权重", _buttonStyle, GUILayout.Height(26)))
+            ApplyWeights();
+
+        GUILayout.Space(6);
+
+        // 快捷预设
+        GUILayout.Label("📦 预设", _sectionStyle);
+        GUILayout.Space(2);
+
+        GUILayout.BeginHorizontal();
+        if (GUILayout.Button("好动", _buttonStyle, GUILayout.Height(24)))
         {
+            _wLeftEdge = 3; _wRightEdge = 3;
+            _wLeftTime = 3; _wRightTime = 3; _wStop = 1;
             ApplyWeights();
         }
+        if (GUILayout.Button("均衡", _buttonStyle, GUILayout.Height(24)))
+        {
+            _wLeftEdge = 2; _wRightEdge = 2;
+            _wLeftTime = 2; _wRightTime = 2; _wStop = 2;
+            ApplyWeights();
+        }
+        if (GUILayout.Button("安静", _buttonStyle, GUILayout.Height(24)))
+        {
+            _wLeftEdge = 1; _wRightEdge = 1;
+            _wLeftTime = 1; _wRightTime = 1; _wStop = 6;
+            ApplyWeights();
+        }
+        GUILayout.EndHorizontal();
+    }
 
-        GUILayout.Space(8);
+    #endregion
 
-        // ===== 强制动作 =====
-        GUILayout.Label("▶ 强制动作", _sectionStyle);
+    #region 标签页: 动作
+
+    private void DrawActionsTab()
+    {
+        GUILayout.Label("▶ 强制播放动作", _sectionStyle);
         GUILayout.Space(2);
 
         DrawActionButtonRow(1, "歪头", 2, "微笑", 3, "挑眉");
         DrawActionButtonRow(4, "星辉", 5, "伸懒腰", 6, "爱心");
         DrawActionButtonRow(7, "数钱", 8, "委屈", 9, "法阵");
         DrawActionButtonRow(10, "害羞", 0, null, 0, null);
+    }
+
+    #endregion
+
+    #region 标签页: 聊天
+
+    // 聊天标签专用的聊天消息样式
+    private GUIStyle _chatMsgStyle;
+    private GUIStyle _chatUserStyle;
+
+    private void InitChatStyles()
+    {
+        if (_chatMsgStyle != null) return;
+        _chatMsgStyle = new GUIStyle
+        {
+            normal = { textColor = new Color(0.7f, 1f, 0.8f) },
+            fontSize = 11,
+            wordWrap = true,
+            padding = new RectOffset(4, 4, 2, 2)
+        };
+        _chatUserStyle = new GUIStyle
+        {
+            normal = { textColor = new Color(0.6f, 0.8f, 1f) },
+            fontSize = 11,
+            wordWrap = true,
+            padding = new RectOffset(4, 4, 2, 2)
+        };
+    }
+
+    private void DrawChatTab()
+    {
+        InitChatStyles();
+
+        if (_chat == null)
+        {
+            GUILayout.Label("⚠ ChatManager 未初始化", _labelStyle);
+            return;
+        }
+
+        // ——— 消息显示区域 ———
+        float areaHeight = _menuHeight - 280f;
+        float areaWidth = _menuWidth - 20f;
+
+        GUILayout.BeginVertical(new GUIStyle { normal = { background = _inputBg },
+            padding = new RectOffset(4, 4, 4, 4) });
+
+        _chatScrollPos = GUILayout.BeginScrollView(_chatScrollPos, false, true,
+            GUILayout.Width(areaWidth), GUILayout.Height(areaHeight));
+
+        var visibleHistory = _chat.GetVisibleHistory();
+        if (visibleHistory.Count == 0)
+        {
+            GUILayout.Label("💡 开始和符玄聊天吧", _labelStyle);
+        }
+        else
+        {
+            foreach (var entry in visibleHistory)
+            {
+                string prefix = entry.role == "user" ? "🧑 " : "🌸 ";
+                GUIStyle style = entry.role == "user" ? _chatUserStyle : _chatMsgStyle;
+                GUILayout.Label(prefix + entry.content, style);
+                GUILayout.Space(2);
+            }
+        }
+
+        // 等待状态
+        if (_chat.IsWaiting)
+        {
+            GUILayout.Label("🌸 符玄正在思考...", _chatMsgStyle);
+        }
+
+        GUILayout.EndScrollView();
+        GUILayout.EndVertical();
+
+        // ——— 错误/状态提示 ———
+        if (!string.IsNullOrEmpty(_chat.LastError))
+        {
+            GUIStyle errStyle = new GUIStyle(_labelStyle) { normal = { textColor = Color.red } };
+            GUILayout.Label("⚠ " + _chat.LastError, errStyle);
+        }
+        else if (!string.IsNullOrEmpty(_chatStatusMsg))
+        {
+            GUIStyle statusStyle = new GUIStyle(_labelStyle) { normal = { textColor = _chatStatusColor } };
+            GUILayout.Label(_chatStatusMsg, statusStyle);
+        }
 
         GUILayout.Space(4);
 
-        GUILayout.EndScrollView();
-
-        // ===== 关闭按钮 =====
+        // ——— 输入区域 ———
         GUILayout.BeginHorizontal();
-        GUILayout.FlexibleSpace();
-        if (GUILayout.Button("✕ 关闭", _closeButtonStyle, GUILayout.Width(80), GUILayout.Height(24)))
+
+        // 按 Enter 发送
+        bool enterPressed = Event.current.isKey
+            && Event.current.type == EventType.KeyDown
+            && (Event.current.keyCode == KeyCode.Return || Event.current.keyCode == KeyCode.KeypadEnter)
+            && _chatInputText.Length > 0 && GUI.GetNameOfFocusedControl() == "chatInput";
+
+        GUI.SetNextControlName("chatInput");
+        _chatInputText = GUILayout.TextField(_chatInputText, _textFieldStyle,
+            GUILayout.Height(24), GUILayout.MinWidth(160));
+
+        bool canSend = !string.IsNullOrWhiteSpace(_chatInputText) && !_chat.IsWaiting;
+
+        if (GUILayout.Button("发送", canSend ? _buttonStyle : _tabButtonStyle,
+            GUILayout.Width(50), GUILayout.Height(24)))
         {
-            Close();
+            if (canSend)
+                enterPressed = true;
         }
-        GUILayout.FlexibleSpace();
+
+        if (enterPressed && canSend)
+        {
+            Event.current.Use();
+            string msg = _chatInputText;
+            _chatInputText = "";
+            _chatScrollPos = new Vector2(0, float.MaxValue);
+            _chat.SendMessage(msg, () => { _chatScrollPos = new Vector2(0, float.MaxValue); });
+            GUI.FocusControl(null);
+        }
+
         GUILayout.EndHorizontal();
 
-        GUILayout.EndArea();
+        GUILayout.Space(4);
+
+        // ——— 底部工具栏 ———
+        GUILayout.BeginHorizontal();
+
+        if (GUILayout.Button("📋 复制聊天", _buttonStyle, GUILayout.Height(22)))
+        {
+            CopyChatToClipboard();
+        }
+
+        if (GUILayout.Button("🗑 清空", _buttonStyle, GUILayout.Height(22)))
+        {
+            _chat.ClearHistory();
+            _chatStatusMsg = "对话已清空";
+            _chatStatusColor = Color.gray;
+        }
+
+        GUILayout.EndHorizontal();
     }
+
+    #endregion
+
+    #region 标签页: 调试
+
+    private void DrawDebugTab()
+    {
+        GUILayout.Label("🔧 调试信息", _sectionStyle);
+        GUILayout.Space(2);
+
+        // 刷新调试信息
+        RefreshDebugInfo();
+
+        GUILayout.BeginVertical(new GUIStyle { normal = { background = _inputBg }, padding = new RectOffset(4, 4, 4, 4) });
+        GUILayout.TextArea(_debugInfo, _debugTextStyle, GUILayout.Height(150));
+        GUILayout.EndVertical();
+
+        GUILayout.Space(6);
+
+        // 操作按钮
+        GUILayout.Label("🛠 工具", _sectionStyle);
+        GUILayout.Space(2);
+
+        if (GUILayout.Button("🔄 刷新参数", _buttonStyle, GUILayout.Height(24)))
+        {
+            RefreshDebugInfo();
+        }
+
+        GUILayout.Space(2);
+
+        if (GUILayout.Button("📋 复制调试信息", _buttonStyle, GUILayout.Height(24)))
+        {
+            GUIUtility.systemCopyBuffer = _debugInfo;
+        }
+
+        GUILayout.Space(2);
+
+        // 参数快捷操作
+        GUILayout.Label("参数重置", _sectionStyle);
+        GUILayout.Space(2);
+
+        GUILayout.BeginHorizontal();
+        if (GUILayout.Button("重置手臂", _buttonStyle, GUILayout.Height(24)))
+        {
+            if (_renderer != null)
+            {
+                _renderer.SetParameterValue("Param33", 0);
+                _renderer.SetParameterValue("Param31", 0);
+                _renderer.SetParameterValue("Param32", 0);
+                _renderer.SetParameterValue("Param94", 0);
+                _renderer.SetParameterValue("Param97", 0);
+            }
+        }
+        if (GUILayout.Button("法阵手势", _buttonStyle, GUILayout.Height(24)))
+        {
+            if (_renderer != null)
+            {
+                _renderer.SetParameterValue("Param33", 1);
+                _renderer.SetParameterValue("Param31", 1);
+                _renderer.SetParameterValue("Param32", 1);
+                _renderer.SetParameterValue("Param94", -5);
+                _renderer.SetParameterValue("Param97", 0);
+            }
+        }
+        GUILayout.EndHorizontal();
+    }
+
+    private void RefreshDebugInfo()
+    {
+        try
+        {
+            string petState = _pet != null
+                ? $"isPaused={_pet.isPaused}  onGround={_pet.onGround}  petVx={_pet.petVx}"
+                : "N/A";
+
+            string rendererState = _renderer != null
+                ? $"currentAction={_renderer.CurrentActionId}  isLocked={_renderer.IsActionLocked}"
+                : "N/A";
+
+            string windowState = _window != null
+                ? $"visible={_window.isActiveAndEnabled}"
+                : "N/A";
+
+            string chatState = _chat != null
+                ? $"history={_chat.HistoryCount}  waiting={_chat.IsWaiting}"
+                : "N/A";
+
+            // 参数快照
+            string paramsSnapshot = "";
+            if (_renderer != null)
+            {
+                int[] paramIds = { 31, 32, 33, 94, 95, 97, 98, 100, 108, 116, 117, 119, 120 };
+                foreach (int id in paramIds)
+                {
+                    float val = _renderer.GetParameterValue($"Param{id}");
+                    paramsSnapshot += $"  Param{id}={val:F2}";
+                }
+            }
+
+            _debugInfo = $"⏱ {System.DateTime.Now:HH:mm:ss}\n"
+                       + $"🐾 宠物: {petState}\n"
+                       + $"🎨 渲染: {rendererState}\n"
+                       + $"🪟 窗口: {windowState}\n"
+                       + $"💬 聊天: {chatState}\n"
+                       + $"📐 参数:\n{paramsSnapshot}";
+        }
+        catch (System.Exception ex)
+        {
+            _debugInfo = $"获取调试信息失败: {ex.Message}";
+        }
+    }
+
+    #endregion
+
+    #region 聊天复制
+
+    /// <summary>将聊天记录复制到剪贴板</summary>
+    private void CopyChatToClipboard()
+    {
+        if (_chat == null) return;
+
+        var visible = _chat.GetVisibleHistory();
+        if (visible.Count == 0)
+        {
+            _chatStatusMsg = "没有聊天记录可复制";
+            _chatStatusColor = Color.gray;
+            return;
+        }
+
+        var sb = new System.Text.StringBuilder();
+        foreach (var entry in visible)
+        {
+            string who = entry.role == "user" ? "我" : "符玄";
+            sb.AppendLine($"[{who}] {entry.content}");
+            sb.AppendLine();
+        }
+
+        GUIUtility.systemCopyBuffer = sb.ToString().TrimEnd();
+        _chatStatusMsg = $"✅ 已复制 {_chat.HistoryCount} 条消息到剪贴板";
+        _chatStatusColor = Color.green;
+    }
+
+    #endregion
 
     #region 绘制辅助
 
@@ -229,11 +640,9 @@ public class ContextMenu : MonoBehaviour
         GUILayout.BeginHorizontal();
         GUILayout.Label(label, _labelStyle, GUILayout.Width(130));
 
-        // 减
         if (GUILayout.Button("-", _smallButtonStyle))
             value = Mathf.Max(min, value - 1);
 
-        // 数值
         string valStr = value.ToString();
         GUIStyle valStyle = new GUIStyle(_labelStyle)
         {
@@ -242,7 +651,6 @@ public class ContextMenu : MonoBehaviour
         };
         GUILayout.Label(valStr, valStyle);
 
-        // 加
         if (GUILayout.Button("+", _smallButtonStyle))
             value = Mathf.Min(max, value + 1);
 
@@ -270,23 +678,19 @@ public class ContextMenu : MonoBehaviour
         {
             if (_renderer != null)
             {
-                // 先停止走路
                 if (_pet != null)
                     _pet.ForceStop();
-                // 强制播放动作（锁定，不被走路覆盖）
                 _renderer.ForceIdleAction(id);
 
-                // 关闭菜单 UI（宠物保持暂停，等动作播完再恢复）
+                // 关闭菜单
                 _isOpen = false;
 
-                // 清除旧回调 + 注册新回调
                 _renderer.OnForcedActionFinished -= OnForcedActionComplete;
                 _renderer.OnForcedActionFinished += OnForcedActionComplete;
             }
         }
     }
 
-    /// <summary>强制动作播完后的回调 — 恢复宠物运动</summary>
     private void OnForcedActionComplete()
     {
         if (_renderer != null)
@@ -297,8 +701,6 @@ public class ContextMenu : MonoBehaviour
             _pet.isPaused = false;
             _pet.Resume();
         }
-
-        Debug.Log("[ContextMenu] 强制动作完成，宠物已恢复运动");
     }
 
     #endregion
@@ -313,7 +715,6 @@ public class ContextMenu : MonoBehaviour
         _pet.taskWeightMoveRightTime = _wRightTime;
         _pet.taskWeightStopTime = _wStop;
 
-        // 如果当前是停止任务，无需重启；如果是走路任务也无需中断，下次切换生效
         Debug.Log($"[ContextMenu] 权重已应用 左边={_wLeftEdge} 右边={_wRightEdge} 左走={_wLeftTime} 右走={_wRightTime} 停止={_wStop}");
     }
 

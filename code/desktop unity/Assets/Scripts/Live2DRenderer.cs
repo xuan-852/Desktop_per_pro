@@ -1410,4 +1410,26 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             r.material.color = c;
         }
     }
+
+    // ===== 公开接口（供 ContextMenu 调试用） =====
+
+    /// <summary>当前播放的随机动作 ID（0=无）</summary>
+    public int CurrentActionId => _currentIdleAction;
+
+    /// <summary>是否被强制动作锁定</summary>
+    public bool IsActionLocked => _actionLocked;
+
+    /// <summary>设置参数值（公开版）</summary>
+    public void SetParameterValue(string name, float value)
+    {
+        SetParameter(name, value);
+    }
+
+    /// <summary>获取参数当前值，失败返回 0</summary>
+    public float GetParameterValue(string name)
+    {
+        if (_cubismModel == null) return 0f;
+        var param = _cubismModel.Parameters.FindById(name);
+        return param != null ? param.Value : 0f;
+    }
 }

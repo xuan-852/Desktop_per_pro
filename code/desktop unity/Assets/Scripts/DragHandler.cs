@@ -58,6 +58,10 @@ public class DragHandler : MonoBehaviour
     private Vector2 _velocityBuffer;
     private int _velocityFrames;
 
+    // 公开事件（供 AutoChat 监听）
+    public System.Action OnPetClicked;
+    public System.Action OnDragEnded;
+
     // 右键菜单
     private ContextMenu _contextMenu;
 
@@ -208,12 +212,14 @@ public class DragHandler : MonoBehaviour
 
                 _pet.ApplyDragVelocity(vx, vy);
                 Debug.Log($"[DragHandler] 抛掷: ({vx}, {vy})");
+                OnDragEnded?.Invoke();
             }
             else if (_isClickCandidate)
             {
                 if (_renderer != null) _renderer.ShowClickPose();
                 _pet.Pause(clickPauseDuration);
                 Debug.Log("[DragHandler] 轻击宠物");
+                OnPetClicked?.Invoke();
             }
 
             _isDragging = false;

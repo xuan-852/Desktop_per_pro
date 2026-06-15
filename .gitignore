@@ -28,6 +28,12 @@ file/
 code/desktop unity/Assets/StreamingAssets/Live2D/
 
 # ================
+# API 密钥配置（含真实 Key 的文件不提交）
+# ================
+code/desktop unity/Assets/Scripts/ChatConfig.cs
+!code/desktop unity/Assets/Scripts/ChatConfig.cs.example
+
+# ================
 # macOS
 # ================
 .DS_Store
