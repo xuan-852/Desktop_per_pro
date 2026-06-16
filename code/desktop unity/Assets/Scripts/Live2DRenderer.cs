@@ -1,6 +1,7 @@
 using Live2D.Cubism.Core;
 using Live2D.Cubism.Framework;
 using Live2D.Cubism.Framework.Physics;
+using System.Collections.Generic;
 using UnityEngine;
 
 // ===================================================================
@@ -163,6 +164,8 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     private readonly int[] _idleActionWeights = new int[] { 5, 5, 3, 2, 2, 3, 2, 3, 1, 3, 0 };
     // 复合动作相位（用于多参数协同插值）
     private float _complexActionPhase = 0f;
+    // 动作结束后的冷却时间（防动作无限重播）
+    private float _idleActionCooldown = 0f;
 
     // 随机微动用噪声偏移
     private float _noiseTimeX = 0f;
@@ -171,6 +174,12 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     // 强制动作锁定（右键菜单触发，播放期间不被走路覆盖）
     private bool _actionLocked = false;
     public event System.Action OnForcedActionFinished;
+
+    // ===== 调试偏移系统（DebugWindow 实时调参） =====
+    /// <summary>是否启用调试偏移</summary>
+    public bool debugOffsetEnabled = false;
+    /// <summary>调试偏移表：参数名 → 偏移量（在动画值上叠加，每帧重新应用不累积）</summary>
+    public Dictionary<string, float> debugOffsets = new Dictionary<string, float>();
 
     // 是否已加载
     private bool _loaded = false;
@@ -394,6 +403,37 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         }
 
         _wasWalkingLastFrame = isWalking;
+
+        // ★ 调试偏移通道：动画完成后，在动画值上叠加偏移量
+        // 因动画每帧重新设值，偏移不会累积（动画值 + 偏移 = 最终值）
+        // 任一空闲动作运行时暂停偏移，避免破坏动画手部/手指姿态
+        bool hasActiveAction = (_currentIdleAction > 0 && _idleActionTime > 0f);
+        if (debugOffsetEnabled && !_actionLocked && !hasActiveAction && debugOffsets != null && debugOffsets.Count > 0)
+        {
+            foreach (var kv in debugOffsets)
+            {
+                var p = _cubismModel.Parameters.FindById(kv.Key);
+                if (p != null)
+                {
+                    float animVal = p.Value;                      // 动画已设置的值
+                    p.Value = Mathf.Clamp(animVal + kv.Value,     // 叠加偏移
+                        p.MinimumValue, p.MaximumValue);
+                }
+            }
+
+            // ★ 自动设置手部图层/透视参数，让手浮到衣服前面
+            SetParameter("Param95", 1f);
+            SetParameter("Param117", 0.8f);
+            SetParameter("Param98", 0.8f);
+            SetParameter("Param100", 0.8f);
+            SetParameter("Param116", 0.6f);
+            SetParameter("Param120", 1f);
+            SetParameter("Param108", 1f);
+            SetParameter("Param119", 1f);
+
+            // ★ 强制 Cubism 重新计算网格变形
+            _cubismModel.ForceUpdateNow();
+        }
     }
 
     /// <summary>
@@ -432,8 +472,11 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         // ★ 暂停时（菜单打开），不播新动作
         bool isPaused = (_pet != null && _pet.isPaused);
 
-        // 当前动作结束后，加权随机选取下一个
-        if (_currentIdleAction == 0 && !isPaused)
+        // 动作冷却衰减
+        if (_idleActionCooldown > 0f) _idleActionCooldown -= Time.deltaTime;
+
+        // 当前动作结束后，加权随机选取下一个（走路时不触发，需冷却）
+        if (_currentIdleAction == 0 && !isPaused && _idleActionCooldown <= 0f)
         {
             _currentIdleAction = PickWeightedIdleAction();
             _idleActionTime = 0f;
@@ -569,21 +612,21 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         float phase = Mathf.Min(rise, hold); // 梯形：快速起→保持→快速落
 
         // ★ 右臂全套抬升参数
-        SetParameter("Param33", phase * 5f);   // 右手臂R1（上臂）0→5
-        SetParameter("Param31", phase * 4f);   // 右手臂R1（前臂）0→4
-        SetParameter("Param32", phase * 3f);   // 右手臂R2 0→3
-        SetParameter("Param94", phase * 10f);  // 右手上臂旋转 0→10
-        SetParameter("Param97", phase * 3f);   // 右手 基础上臂旋转 0→3
-        SetParameter("Param95", phase * 0.8f); // 右手 基础 上壁透视 0→0.8
-        SetParameter("Param117", phase * 0.5f);// 右手 基础 上壁透视2 0→0.5
-        SetParameter("Param98", phase * 0.6f); // 右手 基础下壁透视 0→0.6
-        SetParameter("Param100", phase * 0.6f);// 右手 基础手 透视 0→0.6
-        SetParameter("Param116", phase * 0.4f);// 透视2 0→0.4
-        SetParameter("Param120", phase * 0.8f);// 手 向前透视效果 0→0.8
-        SetParameter("Param108", phase * 0.8f);// 右手 基础 图层顺序 0→0.8
-        SetParameter("Param119", phase * 0.8f);// 伸手 图层调整 0→0.8
-        SetParameter("Param93", phase);         // 右手 基础 切换 0→1
-        SetParameter("Param118", phase * 0.6f); // 右手伸出参数 0→0.6
+        SetParameter("Param31", phase * 4f);   // 右臂R1（前臂）
+        SetParameter("Param32", phase * 3f);   // 右臂R2
+        SetParameter("Param33", phase * 5f);   // 右臂R1（上臂）
+        SetParameter("Param94", phase * 10f);  // 右手上臂旋转
+        SetParameter("Param97", phase * 3f);   // 右手 基础上臂旋转
+        SetParameter("Param95", phase * 0.8f); // 右手 基础 上壁透视
+        SetParameter("Param117", phase * 0.5f);// 右手 基础 上壁透视2
+        SetParameter("Param98", phase * 0.6f); // 右手 基础下壁透视
+        SetParameter("Param100", phase * 0.6f);// 右手 基础手 透视
+        SetParameter("Param116", phase * 0.4f);// 透视2
+        SetParameter("Param120", phase * 0.8f);// 手 向前透视效果
+        SetParameter("Param108", phase * 0.8f);// 右手 基础 图层顺序
+        SetParameter("Param119", phase * 0.8f);// 伸手 图层调整
+        SetParameter("Param93", phase);         // 右手 基础 切换
+        SetParameter("Param118", phase * 0.6f); // 右手伸出参数
         // 左臂配合
         SetParameter("Param34", -phase * 3f);   // 左臂L1
         SetParameter("Param36", -phase * 2f);   // 左臂L2
@@ -794,277 +837,163 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     /// 动作9: 法阵显现 ✨
     /// 五阶段：举过头顶→剑指成型→指尖凝光→白光扩散→消散
     /// </summary>
+    // ★ Ease 辅助函数
+    private float EaseOutQuad(float x) { return 1f - (1f - x) * (1f - x); }
+    private float EaseInQuad(float x) { return x * x; }
+    private float EaseInCubic(float x) { return x * x * x; }
+
     private void UpdateMagicCircle()
     {
         float p = _complexActionPhase;
         float duration = CIRCLE_DURATION;
         float t = Mathf.Clamp01(p / duration);
 
-        // ─── Phase 1: 举过头顶 (0→1.6s, 0%~20%) ───
+        // ===== 身体姿态（全阶段） =====
+        SetParameter("ParamBodyAngleX", -8f);
+        SetParameter("ParamAngleX", -10f);
+        SetParameter("ParamBodyAngleZ", 0);
+
+        // ===== 手部图层优先级（Phase1-4 保持最前，不被衣服挡住） =====
+        if (t < 0.75f) SetHandLayer(1f);
+
+        // ★ Param92 全程保持剑指模式（不随h渐消，防10指重叠）
+        SetParameter("Param92", 1f);
+
+        // ==================== Phase1: 起势 — 缓入 ====================
         if (t < 0.20f)
         {
             float phase1 = t / 0.20f;
-
-            // ★ 右臂抬起为剑指姿势：上臂右偏下、下臂左偏上
-            SetParameter("Param33", phase1 * 12f);  // 右手臂R1（上臂）0→12
-            SetParameter("Param31", phase1 * 6f);   // 右手臂R1（前臂）0→6
-            SetParameter("Param32", phase1 * 8f);   // 右手臂R2 0→8
-            SetParameter("Param94", phase1 * -6f);  // 右手上臂旋转 0→-6
-            SetParameter("Param97", 0f);             // 右手 基础上臂旋转 0
-            // ★ 透视校正——让手臂在衣服前
-            SetParameter("Param95", phase1 * 1f);    // 右手 基础 上壁透视 0→1
-            SetParameter("Param117", phase1 * 0.8f); // 右手 基础 上壁透视2 0→0.8
-            SetParameter("Param98", phase1 * 0.8f);  // 右手 基础下壁透视 0→0.8
-            SetParameter("Param100", phase1 * 0.8f); // 右手 基础手 透视 0→0.8
-            SetParameter("Param116", phase1 * 0.6f); // 透视2 0→0.6
-            SetParameter("Param120", phase1 * 1f);   // 手 向前透视效果 0→1
-            // ★ 图层顺序——手放到衣服前面！
-            SetParameter("Param108", phase1 * 1f);   // 右手 基础 图层顺序 0→1
-            SetParameter("Param119", phase1 * 1f);   // 伸手 图层调整 0→1
-            // 左臂配合
-            SetParameter("Param34", -phase1 * 6f);   // 左臂L1 0→-6
-            SetParameter("Param36", -phase1 * 4.5f); // 左臂L2 0→-4.5
-            SetParameter("Param37", -phase1 * 3f); // 左臂L3 0→-3
-            
-            // ★ 右手基础开关 + 伸出
-            SetParameter("Param93", phase1);          // 右手 基础 切换 0→1
-            SetParameter("Param118", phase1 * 0.8f);  // 右手伸出参数 0→0.8
-            SetParameter("Param92", 0f);              // 切换→基础模式（非手指）
-            
-            // 身体后仰 + 抬头
-            SetParameter("ParamBodyAngleX", phase1 * -8f);  // 身体前后倾 0→-8
-            SetParameter("ParamAngleX", phase1 * -10f);     // 头部上下 0→-10
-            SetParameter("ParamBodyAngleZ", 0);            // 身体侧转 0
-            
-            // 法阵特效
-            SetParameter("Param132", phase1 * 0.8f);   // 法眼发光 0→0.8
-            SetParameter("Param154", phase1 * 0.8f);   // 七星盘透明度 0→0.8
-            SetParameter("Param133", 0);             // 白圈大小 0
-            SetParameter("Param136", 0);             // 白圈透明度 0
-            SetParameter("Param134", 0);             // 白圈偏移X 0
-            SetParameter("Param135", 0);             // 白圈偏移Y 0
+            float h = EaseInCubic(phase1);
+            SetParameter("Param132", phase1 * 0.8f);
+            SetParameter("Param154", phase1 * 0.8f);
+            SetParameter("Param133", 0);
+            SetParameter("Param136", 0);
+            SetParameter("Param134", 0);
+            SetParameter("Param135", 0);
+            SetHandPose(h);
+            SetSwordFinger(h);
+            return;
         }
-        // ─── Phase 2: 剑指成型 (1.6→3.6s, 20%~45%) ───
-        else if (t < 0.45f)
+
+        // ==================== Phase2: 剑指成型 ====================
+        if (t < 0.45f)
         {
-            float phase2 = (t - 0.20f) / 0.25f;
-
-            // ★ 右臂保持剑指姿势：上臂右偏下、下臂左偏上
-            SetParameter("Param33", 12f);     // 右手臂R1（上臂）保持
-            SetParameter("Param31", 6f);      // 右手臂R1（前臂）保持
-            SetParameter("Param32", 8f);      // 右手臂R2 保持
-            SetParameter("Param94", -6f);     // 右手上臂旋转 -6
-            SetParameter("Param97", 0f);      // 右手 基础上臂旋转 0
-            // ★ 透视校正保持
-            SetParameter("Param95", 1f);      // 右手 基础 上壁透视
-            SetParameter("Param117", 0.8f);   // 右手 基础 上壁透视2
-            SetParameter("Param98", 0.8f);    // 右手 基础下壁透视
-            SetParameter("Param100", 0.8f);   // 右手 基础手 透视
-            SetParameter("Param116", 0.6f);   // 透视2
-            SetParameter("Param120", 1f);     // 手 向前透视效果
-            // ★ 图层顺序——手放到衣服前面！
-            SetParameter("Param108", 1f);     // 右手 基础 图层顺序
-            SetParameter("Param119", 1f);     // 伸手 图层调整
-            // 左臂保持
-            SetParameter("Param34", -6f);     // 左臂L1 保持
-            SetParameter("Param36", -4.5f);   // 左臂L2 保持
-            SetParameter("Param37", -3f);   // 左臂L3 保持
-            
-            // ★ 右手保持开启 + 伸出
-            SetParameter("Param93", 1f);          // 右手 基础 切换 ON
-            SetParameter("Param118", 0.8f);        // 右手伸出
-            
-            // ★ 剑指手势：食指(2)+中指(3)伸出，拇指(1)/无名指(4)/小指(5)收起
-            SetParameter("Param92", phase2);       // 右手切换→手指模式 0→1
-            SetParameter("Param111", 0.2f);        // 右手 指 手指1(拇指) 收
-            SetParameter("Param112", 1f);           // 右手 指 手指2(食指) 伸
-            SetParameter("Param113", 1f);           // 右手 指 手指3(中指) 伸
-            SetParameter("Param114", 0.2f);        // 右手 指 手指4(无名指) 收
-            SetParameter("Param115", 0.2f);        // 右手 指 手指5(小指) 收
-            
-            // ★ 手腕微调（调整让手指指天）
-            SetParameter("Param110", -0.5f);        // 右手 指 Z 微旋（反向调整）
-            SetParameter("Param99", 0.3f);         // 右手 基础手腕Z 微调（反向调整）
-            
-            // 身体保持姿态
-            SetParameter("ParamBodyAngleX", -8f);  // 身体前后倾 -8
-            SetParameter("ParamAngleX", -10f);     // 头部上下 -10
-            SetParameter("ParamBodyAngleZ", 0);     // 身体侧转 0
-            
-            // 法阵特效（保持 + 脉动）
-            SetParameter("Param132", 0.8f);   // 法眼发光 0.8
             float platePulse = (Mathf.Sin(p * 3.5f) * 0.5f + 0.5f) * 0.8f;
-            SetParameter("Param154", platePulse);   // 七星盘脉动
-            SetParameter("Param133", 0);         // 白圈大小 0
-            SetParameter("Param136", 0);         // 白圈透明度 0
-            SetParameter("Param134", 0);         // 白圈偏移X 0
-            SetParameter("Param135", 0);         // 白圈偏移Y 0
+            SetParameter("Param132", 0.8f);
+            SetParameter("Param154", platePulse);
+            SetParameter("Param133", 0);
+            SetParameter("Param136", 0);
+            SetParameter("Param134", 0);
+            SetParameter("Param135", 0);
+            SetHandPose(1f);
+            SetSwordFinger(1f);
+            return;
         }
-        // ─── Phase 3: 指尖凝光 (3.0→4.0s, 38%~50%) ───
-        else if (t < 0.50f)
+
+        // ==================== Phase3: 指尖凝光 ====================
+        if (t < 0.50f)
         {
             float phase3 = (t - 0.38f) / 0.12f;
-
-            // ★ 右臂保持剑指姿势：上臂右偏下、下臂左偏上
-            SetParameter("Param33", 12f);     // 右手臂R1（上臂）保持
-            SetParameter("Param31", 6f);      // 右手臂R1（前臂）保持
-            SetParameter("Param32", 8f);      // 右手臂R2 保持
-            SetParameter("Param94", -6f);     // 右手上臂旋转 -6
-            SetParameter("Param97", 0f);      // 右手 基础上臂旋转 0
-            // ★ 透视校正保持
-            SetParameter("Param95", 1f);      // 右手 基础 上壁透视
-            SetParameter("Param117", 0.8f);   // 右手 基础 上壁透视2
-            SetParameter("Param98", 0.8f);    // 右手 基础下壁透视
-            SetParameter("Param100", 0.8f);   // 右手 基础手 透视
-            SetParameter("Param116", 0.6f);   // 透视2
-            SetParameter("Param120", 1f);     // 手 向前透视效果
-            // ★ 图层顺序——手放到衣服前面！
-            SetParameter("Param108", 1f);     // 右手 基础 图层顺序
-            SetParameter("Param119", 1f);     // 伸手 图层调整
-            // 左臂保持
-            SetParameter("Param34", -6f);     // 左臂L1 保持
-            SetParameter("Param36", -4.5f);   // 左臂L2 保持
-            SetParameter("Param37", -3f);   // 左臂L3 保持
-            
-            // ★ 右手剑指保持
-            SetParameter("Param93", 1f);          // 右手 ON
-            SetParameter("Param118", 0.8f);        // 右手伸出
-            SetParameter("Param92", 1f);           // 右手→手指模式
-            SetParameter("Param111", 0.2f);        // 拇指 收
-            SetParameter("Param112", 1f);           // 食指 伸
-            SetParameter("Param113", 1f);           // 中指 伸
-            SetParameter("Param114", 0.2f);        // 无名指 收
-            SetParameter("Param115", 0.2f);        // 小指 收
-            SetParameter("Param110", -0.5f);        // 指Z（调整让手指指天）
-            
-            // 身体保持
-            SetParameter("ParamBodyAngleX", -8f);
-            SetParameter("ParamAngleX", -10f);
-            SetParameter("ParamBodyAngleZ", 0);
-            
-            // 白点凝聚
-            SetParameter("Param133", phase3 * 5f);       // 白圈大小 0→5
-            SetParameter("Param136", phase3);           // 白圈透明度 0→1
-            SetParameter("Param134", 0);              // 白圈偏移X 0
-            SetParameter("Param135", 0);              // 白圈偏移Y 0
-            
-            // 七星盘隐退
-            SetParameter("Param132", 0.8f - phase3 * 0.56f); // 法眼 0.8→0.24
-            SetParameter("Param154", 0.8f - phase3 * 0.56f); // 七星盘 0.8→0.24
+            SetParameter("Param133", phase3 * 5f);
+            SetParameter("Param136", phase3);
+            SetParameter("Param134", 0);
+            SetParameter("Param135", 0);
+            SetParameter("Param132", 0.8f - phase3 * 0.56f);
+            SetParameter("Param154", 0.8f - phase3 * 0.56f);
+            SetHandPose(1f);
+            SetSwordFinger(1f);
+            return;
         }
-        // ─── Phase 4: 白光扩散 (3.8→6.0s, 48%~75%) ───
-        else if (t < 0.75f)
+
+        // ==================== Phase4: 白光扩散 ====================
+        if (t < 0.75f)
         {
             float phase4 = (t - 0.48f) / 0.27f;
-
-            // ★ 手臂被能量震回
-            float rightFade = 1f - phase4 * 0.5f; // 1→0.5
-            SetParameter("Param33", 12f * rightFade);      // 右手臂R1（上臂）12→6
-            SetParameter("Param31", 6f * rightFade);      // 右手臂R1（前臂）6→3
-            SetParameter("Param32", 8f * rightFade);      // 右手臂R2 8→4
-            SetParameter("Param94", -6f * rightFade);     // 右手上臂旋转 -6→-3
-            SetParameter("Param97", 0f);                  // 右手 基础上臂旋转 0
-            SetParameter("Param95", 1f * rightFade);     // 右手 基础 上壁透视 1→0.5
-            SetParameter("Param117", 0.8f * rightFade);  // 右手 基础 上壁透视2 0.8→0.4
-            SetParameter("Param98", 0.8f * rightFade);   // 右手 基础下壁透视 0.8→0.4
-            SetParameter("Param100", 0.8f * rightFade);  // 右手 基础手 透视 0.8→0.4
-            SetParameter("Param116", 0.6f * rightFade);  // 透视2 0.6→0.3
-            SetParameter("Param120", 1f * rightFade);    // 手 向前透视效果 1→0.5
-            SetParameter("Param108", 1f * rightFade);    // 右手 基础 图层顺序 1→0.5
-            SetParameter("Param119", 1f * rightFade);    // 伸手 图层调整 1→0.5
-            float leftFade = -6f + phase4 * 2.5f;
-            SetParameter("Param34", leftFade);     // 左臂L1 -6→-3.5
-            SetParameter("Param36", -4.5f + phase4 * 2f);  // 左臂L2 -4.5→-2.5
-            SetParameter("Param37", -3f + phase4 * 1.5f);    // 左臂L3 -3→-1.5
-            
-            // ★ 剑指收回 + 手渐收
-            float handOut = 1f - phase4 * 0.5f;  // 1→0.5
-            SetParameter("Param93", handOut);     // 右手切换 渐关
-            SetParameter("Param118", 0.8f - phase4 * 0.4f); // 右手伸出 0.8→0.4
-            SetParameter("Param92", 1f - phase4); // 手指模式 1→0
-            SetParameter("Param111", 0.2f);
-            SetParameter("Param112", 1f - phase4 * 0.8f);  // 食指 1→0.2
-            SetParameter("Param113", 1f - phase4 * 0.8f);  // 中指 1→0.2
-            SetParameter("Param114", 0.2f);
-            SetParameter("Param115", 0.2f);
-            SetParameter("Param110", -0.5f + phase4 * 0.5f); // 指Z回正（从-0.5→0）
-            
-            // 身体继续保持
-            SetParameter("ParamBodyAngleX", -8f);
-            SetParameter("ParamAngleX", -10f);
-            SetParameter("ParamAngleZ", 0);
-            
-            // 白圈扩散到全屏
-            SetParameter("Param133", 5f + phase4 * 55f);     // 白圈大小 5→60
-            SetParameter("Param136", 1f - phase4);               // 白圈透明度 1→0
+            float h = 1f - EaseOutQuad(phase4);
+            // 白圈扩散
+            SetParameter("Param133", 5f + phase4 * 55f);
+            SetParameter("Param136", 1f - phase4);
             SetParameter("Param134", 0);
             SetParameter("Param135", 0);
-            
-            // 人物缩小 + 镜头上移
-            SetParameter("Param157", -phase4 * 0.15f);         // 人物缩放 0→-0.15
-            SetParameter("Param156", -phase4 * 3f);             // 镜头Y偏移 0→-3
-            
-            // 法眼隐去
-            SetParameter("Param132", 0.24f - phase4 * 0.24f); // 法眼 0.24→0
-            SetParameter("Param154", 0.24f - phase4 * 0.24f); // 七星盘 0.24→0
+            SetParameter("Param157", -phase4 * 0.15f);
+            SetParameter("Param156", -phase4 * 3f);
+            SetParameter("Param132", 0.24f - phase4 * 0.24f);
+            SetParameter("Param154", 0.24f - phase4 * 0.24f);
+            // ★ 手缓慢消退（图层保持最前，仅pose消退）
+            SetHandPose(h);
+            SetSwordFinger(h);
+            return;
         }
-        // ─── Phase 5: 消散 (6.0→8.0s, 75%~100%) ───
-        else
+
+        // ==================== Phase5: 消散 ====================
         {
             float phase5 = (t - 0.75f) / 0.25f;
-            float fade = 1f - phase5;
-
-            // ★ 双手缓缓放下
-            SetParameter("Param33", fade * 12f);    // 右手臂R1（上臂）12→0
-            SetParameter("Param31", fade * 6f);     // 右手臂R1（前臂）6→0
-            SetParameter("Param32", fade * 8f);     // 右手臂R2 8→0
-            SetParameter("Param94", fade * -6f);    // 右手上臂旋转 -6→0
-            SetParameter("Param97", 0f);            // 右手 基础上臂旋转 0
-            SetParameter("Param95", fade * 1f);     // 右手 基础 上壁透视 1→0
-            SetParameter("Param117", fade * 0.8f);  // 右手 基础 上壁透视2 0.8→0
-            SetParameter("Param98", fade * 0.8f);   // 右手 基础下壁透视 0.8→0
-            SetParameter("Param100", fade * 0.8f);  // 右手 基础手 透视 0.8→0
-            SetParameter("Param116", fade * 0.6f);  // 透视2 0.6→0
-            SetParameter("Param120", fade * 1f);    // 手 向前透视效果 1→0
-            SetParameter("Param108", fade * 1f);    // 右手 基础 图层顺序 1→0
-            SetParameter("Param119", fade * 1f);    // 伸手 图层调整 1→0
-            SetParameter("Param34", fade * -6f);    // 左臂L1 -6→0
-            SetParameter("Param36", fade * -4.5f);  // 左臂L2 -4.5→0
-            SetParameter("Param37", fade * -3f);  // 左臂L3 -3→0
-            
-            // ★ 右手完全收回
-            SetParameter("Param93", fade * 0.5f);   // 右手切换 渐灭
-            SetParameter("Param118", fade * 0.4f);  // 右手伸出 渐收
-            SetParameter("Param92", 0f);             // 手指模式 OFF
-            SetParameter("Param111", 0f);
-            SetParameter("Param112", 0f);
-            SetParameter("Param113", 0f);
-            SetParameter("Param114", 0f);
-            SetParameter("Param115", 0f);
-            SetParameter("Param110", 0f);            // 指Z回正
-            SetParameter("Param99", 0f);             // 手腕Z回正
-            
+            float fade = 1f - EaseOutQuad(phase5);
             // 身体回正
-            SetParameter("ParamBodyAngleX", fade * -8f);    // -8→0
-            SetParameter("ParamAngleX", fade * -10f);      // -10→0
-            SetParameter("ParamBodyAngleZ", 0);
-            
-            // 白光消退
-            SetParameter("Param133", fade * 60f * 0.6f); // 60→36
-            SetParameter("Param136", fade * 0.6f);       // 0→0.6
-            
-            // 人物恢复正常
-            SetParameter("Param157", fade * -0.15f);     // -0.15→0
-            SetParameter("Param156", fade * -3f);          // -3→0
+            SetParameter("ParamBodyAngleX", fade * -8f);
+            SetParameter("ParamAngleX", fade * -10f);
+            // 镜头回正 + 人物恢复大小（白圈在Phase4已消退完，不重设避免闪第二次）
+            SetParameter("Param157", fade * -0.15f);
+            SetParameter("Param156", fade * -3f);
             SetParameter("Param134", 0);
             SetParameter("Param135", 0);
-            
-            // 法眼余光消散
             SetParameter("Param132", 0);
             SetParameter("Param154", 0);
+            // ★ 手部图层消退 + 切回普通手指模式（pose已在Phase4消退完，不再重设）
+            SetHandLayer(fade);
+            SetParameter("Param92", fade);
+            if (t >= 1f) ResetIdleAction();
         }
+    }
 
-        if (t >= 1f) ResetIdleAction();
+    /// <summary>设置剑指手指参数（h=0~1 控制强度，用于淡入淡出，不设Param92防10指重叠）</summary>
+    private void SetSwordFinger(float h)
+    {
+        SetParameter("Param102", 0f);
+        SetParameter("Param103", 0f);
+        SetParameter("Param105", 0f);
+        SetParameter("Param106", 0f);
+        SetParameter("Param107", 0f);
+        SetParameter("Param111", h * 0.2f);
+        SetParameter("Param112", h * 1f);
+        SetParameter("Param113", h * 1f);
+        SetParameter("Param114", h * 0.2f);
+        SetParameter("Param115", h * 0.2f);
+        SetParameter("Param110", h * -0.5f);
+    }
+
+    /// <summary>设置剑指单手姿势（右手剑指，h=0~1 控制强度，用于淡入淡出）
+    /// ★ 左手不抬起（保持自然下垂），符玄法阵是右手单手指天</summary>
+    private void SetHandPose(float h)
+    {
+        // 右手（改为顺时针）
+        SetParameter("Param94", h * -4.84f);
+        SetParameter("Param97", h * -27.42f);
+        SetParameter("Param93", h * 1f); // 右手切换→剑指模式
+        SetParameter("Param118", h * -0.32f);
+        SetParameter("Param99", h * -18.71f);
+        SetParameter("Param38", h * 0f);
+        SetParameter("Param39", h * 0f);
+        SetParameter("Param31", h * -8f);
+        SetParameter("Param32", h * -6f);  // 右臂R2
+        SetParameter("Param33", h * -10f); // 右臂R1（上臂）
+        // ★ 左手保持0（不下垂也不抬起），维持自然体态
+        SetParameter("Param34", 0f);
+        SetParameter("Param36", 0f);
+        SetParameter("Param37", 0f);
+    }
+
+    /// <summary>设置手部透视/图层（独立于姿势，始终在最上层）</summary>
+    private void SetHandLayer(float layer)
+    {
+        SetParameter("Param95", layer * 1f);
+        SetParameter("Param117", layer * 0.8f);
+        SetParameter("Param98", layer * 0.8f);
+        SetParameter("Param100", layer * 0.8f);
+        SetParameter("Param116", layer * 0.6f);
+        SetParameter("Param120", layer * 1f);
+        SetParameter("Param108", layer * 1f);
+        SetParameter("Param119", layer * 1f);
     }
 
     /// <summary>重置空闲动作，清理参数</summary>
@@ -1076,6 +1005,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         _currentIdleAction = 0;
         _idleActionTime = 0f;
         _complexActionPhase = 0f;
+        _idleActionCooldown = 1.5f; // 冷却1.5秒防立即重播
 
         // 清理可能被改过的参数（表情/特殊参数）
         SetParameter("ParamAngleZ", 0f);
@@ -1115,9 +1045,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("Param120", 0f); // 手 向前透视效果
         SetParameter("Param108", 0f); // 右手 基础 图层顺序
         SetParameter("Param119", 0f); // 伸手 图层调整
-        SetParameter("Param33", 0f);  // 右手臂R1（上臂）
         SetParameter("Param31", 0f);  // 右手臂R1（前臂）
         SetParameter("Param32", 0f);  // 右手臂R2
+        SetParameter("Param33", 0f);  // 右手臂R1（上臂）
         SetParameter("Param93", 0f);  // 右手基础切换
         SetParameter("Param34", 0f);  // 左手手臂L1
         SetParameter("Param36", 0f);  // 左手手臂L2
@@ -1136,6 +1066,12 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("Param113", 0f); // 手指3(中指)
         SetParameter("Param114", 0f); // 手指4(无名指)
         SetParameter("Param115", 0f); // 手指5(小指)
+        // 正常五指清零（防Param92切回普通模式时有残留值）
+        SetParameter("Param102", 0f);
+        SetParameter("Param103", 0f);
+        SetParameter("Param105", 0f);
+        SetParameter("Param106", 0f);
+        SetParameter("Param107", 0f);
         // 法阵参数
         SetParameter("Param121", 0f); // 黑幕切换
         SetParameter("Param137", 0f); // 黑幕透明显现
@@ -1168,6 +1104,28 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         _currentIdleAction = actionId;
         _idleActionTime = 0f;
         _complexActionPhase = 0f;
+
+        // ★ 强制动作时，清理可能冲突的调试偏移，防止偏移覆盖动画
+        if (debugOffsetEnabled && debugOffsets != null && debugOffsets.Count > 0)
+        {
+            // 手部/手臂相关参数列表（与法阵/伸懒腰等动作冲突的）
+            string[] handParams = new string[]
+            {
+                "Param33","Param31","Param32","Param94","Param97",
+                "Param93","Param118","Param99","Param92",
+                "Param95","Param117","Param98","Param100","Param116","Param120",
+                "Param108","Param119","Param34","Param36","Param37",
+                "Param110","Param111","Param112","Param113","Param114","Param115"
+            };
+            foreach (var name in handParams)
+            {
+                if (debugOffsets.ContainsKey(name))
+                    debugOffsets.Remove(name);
+            }
+            if (debugOffsets.Count == 0)
+                debugOffsetEnabled = false;
+        }
+
         Debug.Log($"[Live2DRenderer] ▶ 强制动作 #{actionId}（锁定，不被走路覆盖）");
     }
 
@@ -1298,7 +1256,10 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
         // ★ 右手臂与左腿同步（交叉对位：左腿前→右手前）
         //   左臂与右腿同步（右腿前→左手前），与右臂反相
-        SetParameter("Param94", legPhase * WALK_ARM_SWING);       // 右臂 (Param94=右手上臂旋转)
+        SetParameter("Param94", legPhase * WALK_ARM_SWING);      // 右臂 上臂旋转
+        SetParameter("Param31", legPhase * WALK_ARM_SWING);      // 右臂R1 ← 新增（镜像左臂Param34）
+        SetParameter("Param32", legPhase * WALK_ARM_SWING * 0.7f); // 右臂R2 ← 新增（镜像左臂Param36）
+        SetParameter("Param33", legPhase * WALK_ARM_SWING * 0.5f); // 右臂R1上臂 ← 新增（镜像左臂Param37）
         float leftArm = rightPhase * WALK_ARM_SWING;
         SetParameter("Param34", leftArm);    // 左臂L1
         SetParameter("Param36", leftArm * 0.7f);  // 左臂L2
@@ -1477,5 +1438,31 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         if (_cubismModel == null) return 0f;
         var param = _cubismModel.Parameters.FindById(name);
         return param != null ? param.Value : 0f;
+    }
+
+    /// <summary>获取参数最小值，失败返回 0</summary>
+    public float GetParameterMin(string name)
+    {
+        if (_cubismModel == null) return 0f;
+        var param = _cubismModel.Parameters.FindById(name);
+        return param != null ? param.MinimumValue : 0f;
+    }
+
+    /// <summary>获取参数最大值，失败返回 0</summary>
+    public float GetParameterMax(string name)
+    {
+        if (_cubismModel == null) return 0f;
+        var param = _cubismModel.Parameters.FindById(name);
+        return param != null ? param.MaximumValue : 0f;
+    }
+
+    /// <summary>获取所有参数名称列表</summary>
+    public string[] GetAllParameterNames()
+    {
+        if (_cubismModel == null) return System.Array.Empty<string>();
+        var names = new string[_cubismModel.Parameters.Length];
+        for (int i = 0; i < names.Length; i++)
+            names[i] = _cubismModel.Parameters[i].Id;
+        return names;
     }
 }

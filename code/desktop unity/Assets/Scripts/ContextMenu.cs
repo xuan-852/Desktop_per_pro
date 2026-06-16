@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 /// <summary>
 /// 右键上下文菜单 — 分类标签布局
-/// 标签：设置 | 动作 | 聊天 | 调试
+/// 标签：设置 | 动作 | 聊天
 ///
 /// 用 OnGUI 绘制，无需 Canvas/UIPrefab
 /// </summary>
@@ -15,9 +15,9 @@ public class ContextMenu : MonoBehaviour
     private ChatManager _chat;
 
     // ===== 标签系统 =====
-    private enum Tab { 设置, 动作, 聊天, 调试 }
+    private enum Tab { 设置, 动作, 聊天 }
     private Tab _currentTab = Tab.设置;
-    private string[] _tabNames = { "⚙ 设置", "▶ 动作", "💬 聊天", "🔧 调试" };
+    private string[] _tabNames = { "⚙ 设置", "▶ 动作", "💬 聊天" };
 
     // ===== 菜单状态 =====
     private bool _isOpen = false;
@@ -25,6 +25,9 @@ public class ContextMenu : MonoBehaviour
     private float _menuWidth = 300f;
     private float _menuHeight = 420f;
     private Vector2 _scrollPos = Vector2.zero;
+    // 拖动
+    private bool _isDragging = false;
+    private Vector2 _dragMouseOffset = Vector2.zero;
 
     // ===== 权重编辑器副本 =====
     private int _wLeftEdge, _wRightEdge, _wLeftTime, _wRightTime, _wStop;
@@ -43,8 +46,7 @@ public class ContextMenu : MonoBehaviour
     private bool _isLocalAnimating = false;
     public float localSentenceInterval = 1.8f;
 
-    // ===== 调试信息 =====
-    private string _debugInfo = "";
+
 
     // ===== 样式 =====
     private GUIStyle _titleStyle;
@@ -56,7 +58,6 @@ public class ContextMenu : MonoBehaviour
     private GUIStyle _tabButtonStyle;
     private GUIStyle _tabButtonActiveStyle;
     private GUIStyle _textFieldStyle;
-    private GUIStyle _debugTextStyle;
     private Texture2D _bgTexture;
     private Texture2D _sectionBg;
     private Texture2D _btnBg;
@@ -171,14 +172,6 @@ public class ContextMenu : MonoBehaviour
             padding = new RectOffset(4, 4, 3, 3)
         };
 
-        _debugTextStyle = new GUIStyle
-        {
-            normal = { textColor = new Color(0.5f, 0.8f, 0.5f) },
-            fontSize = 10,
-            fontStyle = FontStyle.Normal,
-            padding = new RectOffset(6, 0, 2, 2),
-            wordWrap = true
-        };
     }
 
     #region 公开接口
@@ -270,18 +263,53 @@ public class ContextMenu : MonoBehaviour
 
     #region 主绘制循环
 
+    /// <summary>OnGUI 中用 Event.current 处理拖拽（不 e.Use()，不吞其他控件事件）</summary>
+    private void HandleDragEvent(Event e)
+    {
+        if (!_isOpen) return;
+
+        Rect titleBar = new Rect(_menuRect.x, _menuRect.y, _menuRect.width, 30);
+
+        if (e.type == EventType.MouseDown && titleBar.Contains(e.mousePosition))
+        {
+            _isDragging = true;
+            _dragMouseOffset = e.mousePosition - new Vector2(_menuRect.x, _menuRect.y);
+        }
+        else if (e.type == EventType.MouseUp)
+        {
+            _isDragging = false;
+        }
+        else if (e.type == EventType.MouseDrag && _isDragging)
+        {
+            Vector2 newPos = e.mousePosition - _dragMouseOffset;
+            newPos.x = Mathf.Clamp(newPos.x, 0, Screen.width - _menuWidth);
+            newPos.y = Mathf.Clamp(newPos.y, 0, Screen.height - _menuHeight);
+            _menuRect.x = newPos.x;
+            _menuRect.y = newPos.y;
+        }
+    }
+
     void OnGUI()
     {
         if (!_isOpen) return;
         InitStyles();
 
-        // 背景
+        // ★ 用 Event 处理拖拽（不 e.Use()，不干扰其他控件事件）
+        HandleDragEvent(Event.current);
+
+        // 背景（不消耗事件，纯绘制）
         GUI.Box(_menuRect, GUIContent.none, new GUIStyle { normal = { background = _bgTexture } });
 
         GUILayout.BeginArea(_menuRect);
 
-        // ===== 标题 =====
+        // ===== 标题 + 拖动手柄指示 =====
+        GUILayout.BeginHorizontal();
         GUILayout.Label("✦ 符玄 · 控制面板", _titleStyle);
+        GUILayout.FlexibleSpace();
+        GUILayout.Label("⣿ 拖动", new GUIStyle { normal = { textColor = new Color(0.6f, 0.6f, 0.8f) }, fontSize = 11 });
+        GUILayout.Space(2);
+        GUILayout.EndHorizontal();
+
         GUILayout.Space(2);
 
         // ===== 标签栏 =====
@@ -297,7 +325,6 @@ public class ContextMenu : MonoBehaviour
             case Tab.设置: DrawSettingsTab(); break;
             case Tab.动作: DrawActionsTab(); break;
             case Tab.聊天: DrawChatTab(); break;
-            case Tab.调试: DrawDebugTab(); break;
         }
 
         GUILayout.EndScrollView();
@@ -400,6 +427,18 @@ public class ContextMenu : MonoBehaviour
         DrawActionButtonRow(4, "星辉", 5, "伸懒腰", 6, "爱心");
         DrawActionButtonRow(7, "数钱", 8, "委屈", 9, "法阵");
         DrawActionButtonRow(10, "害羞", 0, null, 0, null);
+
+        GUILayout.Space(8);
+        GUILayout.Label("🛠 工具", _sectionStyle);
+        GUILayout.Space(2);
+
+        if (GUILayout.Button("🔧 调试面板", _buttonStyle, GUILayout.Height(26)))
+        {
+            var dw = GetComponent<DebugWindow>();
+            if (dw == null) dw = gameObject.AddComponent<DebugWindow>();
+            dw.Open();
+            Close();
+        }
     }
 
     #endregion
@@ -585,117 +624,6 @@ public class ContextMenu : MonoBehaviour
         }
 
         GUILayout.EndHorizontal();
-    }
-
-    #endregion
-
-    #region 标签页: 调试
-
-    private void DrawDebugTab()
-    {
-        GUILayout.Label("🔧 调试信息", _sectionStyle);
-        GUILayout.Space(2);
-
-        // 刷新调试信息
-        RefreshDebugInfo();
-
-        GUILayout.BeginVertical(new GUIStyle { normal = { background = _inputBg }, padding = new RectOffset(4, 4, 4, 4) });
-        GUILayout.TextArea(_debugInfo, _debugTextStyle, GUILayout.Height(150));
-        GUILayout.EndVertical();
-
-        GUILayout.Space(6);
-
-        // 操作按钮
-        GUILayout.Label("🛠 工具", _sectionStyle);
-        GUILayout.Space(2);
-
-        if (GUILayout.Button("🔄 刷新参数", _buttonStyle, GUILayout.Height(24)))
-        {
-            RefreshDebugInfo();
-        }
-
-        GUILayout.Space(2);
-
-        if (GUILayout.Button("📋 复制调试信息", _buttonStyle, GUILayout.Height(24)))
-        {
-            GUIUtility.systemCopyBuffer = _debugInfo;
-        }
-
-        GUILayout.Space(2);
-
-        // 参数快捷操作
-        GUILayout.Label("参数重置", _sectionStyle);
-        GUILayout.Space(2);
-
-        GUILayout.BeginHorizontal();
-        if (GUILayout.Button("重置手臂", _buttonStyle, GUILayout.Height(24)))
-        {
-            if (_renderer != null)
-            {
-                _renderer.SetParameterValue("Param33", 0);
-                _renderer.SetParameterValue("Param31", 0);
-                _renderer.SetParameterValue("Param32", 0);
-                _renderer.SetParameterValue("Param94", 0);
-                _renderer.SetParameterValue("Param97", 0);
-            }
-        }
-        if (GUILayout.Button("法阵手势", _buttonStyle, GUILayout.Height(24)))
-        {
-            if (_renderer != null)
-            {
-                _renderer.SetParameterValue("Param33", 1);
-                _renderer.SetParameterValue("Param31", 1);
-                _renderer.SetParameterValue("Param32", 1);
-                _renderer.SetParameterValue("Param94", -5);
-                _renderer.SetParameterValue("Param97", 0);
-            }
-        }
-        GUILayout.EndHorizontal();
-    }
-
-    private void RefreshDebugInfo()
-    {
-        try
-        {
-            string petState = _pet != null
-                ? $"isPaused={_pet.isPaused}  onGround={_pet.onGround}  petVx={_pet.petVx}"
-                : "N/A";
-
-            string rendererState = _renderer != null
-                ? $"currentAction={_renderer.CurrentActionId}  isLocked={_renderer.IsActionLocked}"
-                : "N/A";
-
-            string windowState = _window != null
-                ? $"visible={_window.isActiveAndEnabled}"
-                : "N/A";
-
-            string chatState = _chat != null
-                ? $"history={_chat.HistoryCount}  waiting={_chat.IsWaiting}"
-                : "N/A";
-
-            // 参数快照
-            string paramsSnapshot = "";
-            if (_renderer != null)
-            {
-                int[] paramIds = { 31, 32, 33, 94, 95, 97, 98, 100, 108, 116, 117, 119, 120 };
-                foreach (int id in paramIds)
-                {
-                    float val = _renderer.GetParameterValue($"Param{id}");
-                    paramsSnapshot += $"  Param{id}={val:F2}";
-                }
-            }
-
-            _debugInfo = $"⏱ {System.DateTime.Now:HH:mm:ss}\n"
-                       + $"🐾 宠物: {petState}\n"
-                       + $"🎨 渲染: {rendererState}\n"
-                       + $"🪟 窗口: {windowState}\n"
-                       + $"💬 聊天: {chatState}\n"
-                       + $"📐 参数:\n{paramsSnapshot}";
-        }
-        catch (System.Exception ex)
-        {
-            _debugInfo = $"获取调试信息失败: {ex.Message}";
-        }
     }
 
     #endregion
