@@ -21,6 +21,7 @@ using UnityEngine;
 /// 3. 运行时自动实例化并跟随物理坐标
 /// </summary>
 [RequireComponent(typeof(DesktopPet))]
+[DefaultExecutionOrder(801)]   // CubismPhysicsController=800，我们跑在物理之后
 public class Live2DRenderer : MonoBehaviour, IPetRenderer
 {
     // ===================================================================
@@ -107,7 +108,8 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     const float WALK_LEG_LIFT     = 4f;     // 抬腿幅度 (Param165)
     const float WALK_LEG_SWING    = 6f;     // 腿前后摆幅 (Param126/129 位移)
     const float WALK_LEG_BEND     = 6f;     // 腿弯曲幅度 (Param127/131 透视)
-    const float WALK_ARM_SWING    = 2f;     // 手臂摆动 (Param34/36/37=左臂, Param94=右臂)
+    const float WALK_ARM_BIG      = 2f;     // 手臂大范围参数 (Param94, 范围[-30,60])
+    const float WALK_ARM_SMALL    = 0.4f;   // 手臂小范围参数 (Param31~37, 范围[-1,1])
     const float WALK_BODY_SWING   = 2f;     // 身体Z轴横摆(驱动衣服飘动, ParamBodyAngleZ)
     const float WALK_SHOULDER     = 1.5f;   // 耸肩 (Param153)
     const float WALK_BREATH       = 3f;     // 呼吸恒定加深（给物理持续输入）
@@ -350,6 +352,30 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         }
 
         UpdateModelPosition();
+
+        // ★ 体态提前给物理用：Physics 在 CubismUpdateController.LateUpdate(0)
+        //   中读取 ParamBodyAngleX/Y/Z 来驱动衣服。我们在 Update() 中先设好
+        //   走路的转体/前倾/低头，确保物理拿到正确的体态输入。
+        bool isWalking = (_pet != null && _pet.onGround && _pet.petVx != 0 && !_pet.isPaused && !_actionLocked);
+        if (isWalking)
+        {
+            float bodyWeight = 1f;
+            if (_walkFadeInRemaining > 0f)
+            {
+                float raw = 1f - Mathf.Clamp01(_walkFadeInRemaining / WALK_FADE_IN_DURATION);
+                bodyWeight = raw * raw;
+                _walkFadeInRemaining -= Time.deltaTime;
+            }
+            ApplyWalkBodyPose(bodyWeight);
+        }
+        else if (_wasWalkingLastFrame || _walkBlendRemaining > 0f)
+        {
+            // 过渡帧：_walkBlendRemaining 要到 LateUpdate 才设，但物理在 LateUpdate(0) 就要读体态了
+            // 用 _wasWalkingLastFrame 兜住「刚停的第一帧」不设体态的空窗期
+            float blendWeight = Mathf.Clamp01(_walkBlendRemaining / IDLE_BLEND_DURATION);
+            float eased = blendWeight * blendWeight;
+            ApplyWalkBodyPose(eased);
+        }
     }
 
     private void LateUpdate()
@@ -389,11 +415,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
             if (_walkBlendRemaining > 0f)
             {
-                // 混合期：先播空闲（设噪声/眼部/呼吸），再叠走路渐消（覆盖体态参数）
+                // 混合期：播空闲动画（噪声/眼部/呼吸）
+                // 体态已在 Update() 中设置供 Physics 驱动衣服用
                 UpdateIdleAnimation();
-                float blendWeight = Mathf.Clamp01(_walkBlendRemaining / IDLE_BLEND_DURATION);
-                float eased = blendWeight * blendWeight; // 二次缓出
-                ApplyWalkBodyPose(eased);
                 _walkBlendRemaining -= Time.deltaTime;
             }
             else
@@ -403,6 +427,14 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         }
 
         _wasWalkingLastFrame = isWalking;
+
+        // ★ 强制网格更新：Cubism 的网格在 Update() 阶段已用 C++ 核心算完，
+        //    Physics(800) 覆盖了衣服参数，我们(801)覆盖了手臂参数，
+        //    但网格仍是旧参数结果，需强制刷新用最新参数重新算一遍。
+        if (isWalking || _walkBlendRemaining > 0f)
+        {
+            _cubismModel.ForceUpdateNow();
+        }
 
         // ★ 调试偏移通道：动画完成后，在动画值上叠加偏移量
         // 因动画每帧重新设值，偏移不会累积（动画值 + 偏移 = 最终值）
@@ -1224,18 +1256,6 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     {
         float phase = _walkPhase;
 
-        // ★ 空闲→走路淡入：体态（转体/前倾/低头）渐入，腿臂立刻动
-        float bodyWeight = 1f;
-        if (_walkFadeInRemaining > 0f)
-        {
-            float raw = 1f - Mathf.Clamp01(_walkFadeInRemaining / WALK_FADE_IN_DURATION);
-            bodyWeight = raw * raw; // 二次缓入
-            _walkFadeInRemaining -= Time.deltaTime;
-        }
-
-        // 走路的体态（转体 + 前倾 + 低头 + 呼吸）
-        ApplyWalkBodyPose(bodyWeight);
-
         // ★ 腿/臂动态摆动 — 停止后渐消不需要这些
         // ★ 左腿参数
         //   左腿向前(+)时，右手臂也向前(+) — 交叉对位
@@ -1256,14 +1276,14 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
         // ★ 右手臂与左腿同步（交叉对位：左腿前→右手前）
         //   左臂与右腿同步（右腿前→左手前），与右臂反相
-        SetParameter("Param94", legPhase * WALK_ARM_SWING);      // 右臂 上臂旋转
-        SetParameter("Param31", legPhase * WALK_ARM_SWING);      // 右臂R1 ← 新增（镜像左臂Param34）
-        SetParameter("Param32", legPhase * WALK_ARM_SWING * 0.7f); // 右臂R2 ← 新增（镜像左臂Param36）
-        SetParameter("Param33", legPhase * WALK_ARM_SWING * 0.5f); // 右臂R1上臂 ← 新增（镜像左臂Param37）
-        float leftArm = rightPhase * WALK_ARM_SWING;
-        SetParameter("Param34", leftArm);    // 左臂L1
-        SetParameter("Param36", leftArm * 0.7f);  // 左臂L2
-        SetParameter("Param37", leftArm * 0.5f);  // 左臂L3
+        SetParameter("Param94", legPhase * WALK_ARM_BIG);          // 右臂 上臂旋转 (大范围)
+        SetParameter("Param31", legPhase * WALK_ARM_SMALL * 0.7f); // 右臂R1
+        SetParameter("Param32", legPhase * WALK_ARM_SMALL * 0.4f); // 右臂R2
+        SetParameter("Param33", legPhase * WALK_ARM_SMALL * 0.4f); // 右臂R1上臂
+        float leftArm = rightPhase * WALK_ARM_SMALL;
+        SetParameter("Param34", leftArm * 0.7f);  // 左臂L1
+        SetParameter("Param36", leftArm * 0.4f);  // 左臂L2
+        SetParameter("Param37", leftArm * 0.4f);  // 左臂L3
 
         // 肩膀配合脚步
         SetParameter("Param153", Mathf.Abs(legPhase) * WALK_SHOULDER);
