@@ -50,6 +50,18 @@ public class DragHandler : MonoBehaviour
     [Tooltip("点击后强制暂停时间（秒）")]
     public float clickPauseDuration = 1.0f;
 
+    [Header("双击设置")]
+    [Tooltip("双击判定时间窗口（秒）")]
+    public float doubleClickThreshold = 0.35f;
+
+    [Header("粒子特效")]
+    [Tooltip("点击时的粒子数量（星星）")]
+    public int starParticleCount = 5;
+    [Tooltip("双击时的粒子数量（爱心）")]
+    public int heartParticleCount = 6;
+
+    private ParticleEffectManager _particleFx;
+
     // 拖拽状态
     private bool _isDragging = false;
     private bool _isClickCandidate = false;
@@ -58,8 +70,14 @@ public class DragHandler : MonoBehaviour
     private Vector2 _velocityBuffer;
     private int _velocityFrames;
 
+    // 双击状态
+    private float _lastClickTime = -1f;
+    private Vector2 _lastClickPos;
+    private bool _doubleClickPending = false; // 已确认是双击
+
     // 公开事件（供 AutoChat 监听）
     public System.Action OnPetClicked;
+    public System.Action OnPetDoubleClicked;
     public System.Action OnDragEnded;
 
     // 右键菜单
@@ -92,6 +110,16 @@ public class DragHandler : MonoBehaviour
 
         // BottomInputBar 可能稍后才添加，Start 中找一次
         RefreshBottomBar();
+
+        // 粒子特效管理器
+        _particleFx = GetComponent<ParticleEffectManager>();
+        if (_particleFx == null)
+            _particleFx = FindObjectOfType<ParticleEffectManager>();
+        if (_particleFx == null)
+        {
+            _particleFx = gameObject.AddComponent<ParticleEffectManager>();
+            Debug.Log("[DragHandler] 自动挂载 ParticleEffectManager 组件");
+        }
     }
 
     private void Update()
@@ -143,7 +171,39 @@ public class DragHandler : MonoBehaviour
         }
 
         if (_pet.isPaused)
+        {
+            // ★ 暂停时：只检测点击（支持双击的第二下）
+            // — 鼠标按下（注册候选）—
+            if (Input.GetMouseButtonDown(0))
+            {
+                Vector2 mousePos = GetMousePos();
+                if (IsPointInPet(mousePos))
+                {
+                    _isClickCandidate = true;
+                }
+            }
+            // — 鼠标释放（触发双击判定）—
+            if (Input.GetMouseButtonUp(0) && _isClickCandidate)
+            {
+                Vector2 clickPos = GetMousePos();
+                float now = Time.time;
+                if (now - _lastClickTime <= doubleClickThreshold)
+                {
+                    // === 暂停中的双击 ===
+                    _doubleClickPending = true;
+                    _particleFx?.BurstHearts(GetPetCenter(), heartParticleCount);
+                    if (_renderer != null) _renderer.ShowClickPose(IPetRenderer.ClickZone.Head);
+                    Debug.Log("[DragHandler] 暂停中双击宠物 ❤");
+                    OnPetDoubleClicked?.Invoke();
+                    OnPetClicked?.Invoke();
+                    _lastClickTime = now;
+                    _lastClickPos = clickPos;
+                }
+                _isClickCandidate = false;
+                _isDragging = false;
+            }
             return;
+        }
 
         // ========== 3. 鼠标左键按下 ==========
         if (Input.GetMouseButtonDown(0))
@@ -219,13 +279,59 @@ public class DragHandler : MonoBehaviour
                 _pet.ApplyDragVelocity(vx, vy);
                 Debug.Log($"[DragHandler] 抛掷: ({vx}, {vy})");
                 OnDragEnded?.Invoke();
+                _doubleClickPending = false;
             }
             else if (_isClickCandidate)
             {
-                if (_renderer != null) _renderer.ShowClickPose();
-                _pet.Pause(clickPauseDuration);
-                Debug.Log("[DragHandler] 轻击宠物");
-                OnPetClicked?.Invoke();
+                Vector2 clickPos = GetMousePos();
+                float now = Time.time;
+
+                // ★ 双击检测：两次点击间隔在阈值内
+                if (now - _lastClickTime <= doubleClickThreshold)
+                {
+                    // === 双击 ===
+                    _doubleClickPending = true;
+
+                    // 粒子：爱心爆出
+                    _particleFx?.BurstHearts(GetPetCenter(), heartParticleCount);
+
+                    // 表情：摸头反应（点击位置在头上半部分）
+                    IPetRenderer.ClickZone zone = CalcClickZone(clickPos);
+                    if (zone == IPetRenderer.ClickZone.Head)
+                    {
+                        if (_renderer != null) _renderer.ShowClickPose(zone);
+                    }
+                    else
+                    {
+                        // 不在头部也显示爱心反应
+                        if (_renderer != null) _renderer.ShowClickPose(IPetRenderer.ClickZone.Head);
+                    }
+
+                    _pet.Pause(clickPauseDuration);
+                    Debug.Log("[DragHandler] 双击宠物 ❤");
+                    OnPetDoubleClicked?.Invoke();
+                    OnPetClicked?.Invoke();
+                }
+                else
+                {
+                    // === 单击 ===
+                    _doubleClickPending = false;
+
+                    // 粒子：星星爆出
+                    Vector2 petCenter = GetPetCenter();
+                    _particleFx?.BurstStars(petCenter, starParticleCount);
+
+                    // 分区域点击反应
+                    IPetRenderer.ClickZone zone = CalcClickZone(clickPos);
+                    if (_renderer != null) _renderer.ShowClickPose(zone);
+
+                    _pet.Pause(clickPauseDuration);
+                    Debug.Log($"[DragHandler] 单击宠物 zone={zone}");
+                    OnPetClicked?.Invoke();
+                }
+
+                _lastClickTime = now;
+                _lastClickPos = clickPos;
             }
 
             _isDragging = false;
@@ -286,5 +392,37 @@ public class DragHandler : MonoBehaviour
     private System.IntPtr GetUnityWindowHandle()
     {
         return _window != null ? _window.WindowHandle : System.IntPtr.Zero;
+    }
+
+    // ================================================================
+    //  点击区域判定
+    // ================================================================
+
+    /// <summary>
+    /// 根据鼠标点击位置在宠物 bounding box 内的相对位置判断点击区域
+    /// </summary>
+    private IPetRenderer.ClickZone CalcClickZone(Vector2 mousePos)
+    {
+        // 转成宠物本地坐标 (0~1, 0~1)
+        float lx = (mousePos.x - _pet.petX) / _pet.petWidth;
+        float ly = (mousePos.y - _pet.petY) / _pet.petHeight;
+
+        // 头部：上部 ~35%
+        if (ly >= 0.65f) return IPetRenderer.ClickZone.Head;
+        // 脚部：下部 ~20%
+        if (ly <= 0.20f) return IPetRenderer.ClickZone.Feet;
+        // 身体：中间
+        return IPetRenderer.ClickZone.Body;
+    }
+
+    /// <summary>
+    /// 获取宠物中心坐标（用于粒子爆发位置）
+    /// </summary>
+    private Vector2 GetPetCenter()
+    {
+        return new Vector2(
+            _pet.petX + _pet.petWidth * 0.5f,
+            _pet.petY + _pet.petHeight * 0.5f
+        );
     }
 }

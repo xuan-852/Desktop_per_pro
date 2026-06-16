@@ -126,6 +126,7 @@ public class DesktopPet : MonoBehaviour
 
     private WindowOverlay _windowOverlay;
     private IPetRenderer _renderer;
+    private ParticleEffectManager _particleFx;
 
     #endregion
 
@@ -222,6 +223,16 @@ public class DesktopPet : MonoBehaviour
             Debug.Log("[DesktopPet] 自动添加了 BottomInputBar 组件");
         }
 
+        // 自动确保粒子特效管理器存在
+        if (GetComponent<ParticleEffectManager>() == null)
+        {
+            gameObject.AddComponent<ParticleEffectManager>();
+            Debug.Log("[DesktopPet] 自动添加了 ParticleEffectManager 组件");
+        }
+
+        // 获取粒子特效引用
+        _particleFx = GetComponent<ParticleEffectManager>();
+
         // 获取渲染器引用：优先使用 HybridRenderer
         var hybrid = GetComponent<HybridRenderer>();
         if (hybrid != null)
@@ -263,6 +274,16 @@ public class DesktopPet : MonoBehaviour
         {
             _renderer.OnPetUpdate(petX, petY, petWidth, petHeight,
                 petVx, petVy, onGround, isDragging, isPaused);
+        }
+
+        // 走路拖尾粒子
+        if (_particleFx != null && onGround && petVx != 0)
+        {
+            _particleFx.WalkingTrail(
+                new Vector2(petX, petY),
+                petWidth, petHeight,
+                petVx > 0
+            );
         }
 
         // 物理步进

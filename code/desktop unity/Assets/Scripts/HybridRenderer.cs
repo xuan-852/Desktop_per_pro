@@ -139,7 +139,8 @@ public class HybridRenderer : MonoBehaviour, IPetRenderer
     #region IPetRenderer
 
     public void ShowDragPose() { RequestSwitch(false); live2DRenderer.ShowDragPose(); }
-    public void ShowClickPose() { RequestSwitch(false); live2DRenderer.ShowClickPose(); }
+    public void ShowClickPose(IPetRenderer.ClickZone zone = IPetRenderer.ClickZone.Unknown)
+        { RequestSwitch(false); live2DRenderer.ShowClickPose(zone); }
     public void ShowLandPose() { RequestSwitch(false); live2DRenderer.ShowLandPose(); }
     public void ShowWalkPose() { RequestSwitch(false); live2DRenderer.ShowWalkPose(); }
     public void ShowStopPose(float lockSeconds) { RequestSwitch(false); live2DRenderer.ShowStopPose(lockSeconds); }
