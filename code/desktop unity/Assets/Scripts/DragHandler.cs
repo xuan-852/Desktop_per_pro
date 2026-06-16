@@ -68,6 +68,9 @@ public class DragHandler : MonoBehaviour
     // 鼠标在宠物范围内的状态（每帧更新）
     private bool _mouseOverPet = false;
 
+    // 底部输入栏引用
+    private BottomInputBar _bottomBar;
+
     private void Start()
     {
         _pet = GetComponent<DesktopPet>();
@@ -86,6 +89,9 @@ public class DragHandler : MonoBehaviour
                 Debug.Log("[DragHandler] 自动挂载 ContextMenu 组件");
             }
         }
+
+        // BottomInputBar 可能稍后才添加，Start 中找一次
+        RefreshBottomBar();
     }
 
     private void Update()
@@ -228,21 +234,37 @@ public class DragHandler : MonoBehaviour
     }
 
     /// <summary>
+    /// 查找底部输入栏（每次更新前刷新，应对动态添加）
+    /// </summary>
+    private void RefreshBottomBar()
+    {
+        if (_bottomBar != null) return;
+        _bottomBar = GetComponent<BottomInputBar>();
+        if (_bottomBar == null) _bottomBar = FindObjectOfType<BottomInputBar>();
+    }
+
+    /// <summary>
     /// 每帧根据鼠标位置动态设置点击穿透
     /// </summary>
     private void UpdateClickThrough()
     {
         if (_window == null) return;
 
+        RefreshBottomBar(); // ★ 每帧重新确保引用
+
         Vector2 mousePos = GetMousePos();
         bool overPet = IsPointInPet(mousePos);
+        // ★ 底部输入栏也接收点击（打字用）
+        bool overBar = _bottomBar != null
+            && mousePos.y >= _bottomBar.BarTopY
+            && mousePos.y <= _bottomBar.BarBottomY;
 
-        if (overPet != _mouseOverPet)
+        bool needInput = overPet || overBar;
+
+        if (needInput != _mouseOverPet)
         {
-            _mouseOverPet = overPet;
-            // 在宠物范围内 → 关闭穿透（接收事件）
-            // 在宠物范围外 → 开启穿透（透到桌面）
-            _window.SetClickThrough(!overPet);
+            _mouseOverPet = needInput;
+            _window.SetClickThrough(!needInput);
         }
     }
 

@@ -35,6 +35,7 @@ public class AutoChat : MonoBehaviour
     private ChatManager _chat;
     private ChatBubble _bubble;
     private DragHandler _drag;
+    private Live2DRenderer _renderer;
     private float _lastGreetingTime = -999f;
     private float _lastInteractionTime = -999f;
 
@@ -88,6 +89,7 @@ public class AutoChat : MonoBehaviour
         _chat = GetComponent<ChatManager>();
         _bubble = GetComponent<ChatBubble>();
         if (_bubble == null) _bubble = gameObject.AddComponent<ChatBubble>();
+        _renderer = GetComponent<Live2DRenderer>();
 
         // 监听拖拽事件
         _drag = GetComponent<DragHandler>();
@@ -144,9 +146,35 @@ public class AutoChat : MonoBehaviour
 
     // ==================== AI 回复监听 ====================
 
+    // ===== 困惑检测 =====
+
+    /// <summary>AI 回复中出现这些词时，说明它没听懂，触发困惑动画</summary>
+    private static readonly string[] ConfusionKeywords = new string[]
+    {
+        "不懂", "不明白", "没听懂", "没明白", "不理解",
+        "听不懂", "搞不懂", "一头雾水", "摸不着头脑",
+        "不知所云", "莫名其妙", "什么意思", "困惑",
+        "没头没脑", "搞不清楚", "听不明白", "不知所谓"
+    };
+
     private void HandleNewReply(string reply)
     {
         _bubble.ShowMessage("🌸 " + reply, aiReplyDuration);
+
+        // 检测困惑 → 触发困惑动作
+        if (_renderer != null && IsConfusedReply(reply))
+        {
+            _renderer.ForceIdleAction(11);
+        }
+    }
+
+    private bool IsConfusedReply(string reply)
+    {
+        foreach (var kw in ConfusionKeywords)
+        {
+            if (reply.Contains(kw)) return true;
+        }
+        return false;
     }
 
     // ==================== 定时问候 ====================

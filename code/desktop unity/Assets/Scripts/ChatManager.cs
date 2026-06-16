@@ -5,7 +5,8 @@ using System.Text;
 using System.Collections.Generic;
 
 /// <summary>
-/// 聊天管理器 — 直接调用 OpenAI 兼容 API，无需浏览器/WebView2
+/// 聊天管理器 — 支持 OpenAI 兼容 Function Calling (工具调用)
+/// 符玄可以用「法阵术式」操控电脑（打开网页、搜索、截图、调音量等）
 /// </summary>
 public class ChatManager : MonoBehaviour
 {
@@ -14,7 +15,13 @@ public class ChatManager : MonoBehaviour
     public string apiKey = ChatConfig.ApiKey;
     public string model = "deepseek-chat";
 
-    // 角色设定（system prompt）
+    [Header("工具调用（符玄法阵）")]
+    public ToolCallInvoker toolInvoker;
+    public bool enableTools = true;
+
+    // ==================================================================
+    //  角色设定 — 符玄 + 法阵能力
+    // ==================================================================
     private const string SystemPrompt = @"你是符玄，仙舟「罗浮」太卜司之首。
 
 【身份背景】
@@ -45,31 +52,90 @@ public class ChatManager : MonoBehaviour
 • 用第三眼观察对方的气运，偶尔给出卦象解读
 • 对自己推算的结果自信，但承认变数的存在
 • 在聊天中自然提及仙舟见闻、太卜司日常
-• 对勤奋好学之人不吝赞赏，对懒惰摸鱼之人（如青雀）无奈摇头";
+• 对勤奋好学之人不吝赞赏，对懒惰摸鱼之人（如青雀）无奈摇头
 
-    // 单条聊天记录
+【法阵术式（重要）】
+你如今身处现世，可以施展太卜司的法术来辅助此间的主人。你有以下法阵可用，当主人提出相关请求时，调用对应的法阵术式：
+
+1. 观星术 — 打开网页/搜索信息（open_url / search）
+2. 摄形术 — 截取当前屏幕景象（take_screenshot）
+3. 传音术 — 发送桌面通知 / 读写剪贴板（notify / get_clipboard / set_clipboard）
+4. 开阵术 — 启动应用 / 打开文件 / 打开文件夹（open_app / open_folder）
+5. 洞观术 — 查看系统信息 / 看目录 / 看鼠标位置（get_system_info / list_files / get_mouse_pos）
+6. 调音术 — 调节音量 / 静音（set_volume / mute）
+7. 封印术 — 锁屏 / 关机 / 重启（lock_screen / power）
+
+【法阵使用须知】
+• 用法阵前先用卦象推演一番，再用术式
+• 执行后把结果用白话告诉主人
+• 不可以无故窥探主人隐私
+• 关机/重启/执行命令等重大事项需要主人亲口确认";
+
+    // ==================================================================
+    //  数据模型
+    // ==================================================================
+
     [System.Serializable]
     public class Entry
     {
-        public string role;    // "user" | "assistant"
+        public string role;    // "system" | "user" | "assistant" | "tool"
         public string content;
+        public string tool_call_id;  // tool 角色的回复 id
+        public string name;          // tool 角色的函数名
     }
 
-    // 公开事件（供 AutoChat 监听）
-    public System.Action<string> OnNewReply;
+    // ==================================================================
+    //  事件
+    // ==================================================================
 
-    // 状态
+    /// <summary>收到 AI 文字回复时触发</summary>
+    public System.Action<string> OnNewReply;
+    /// <summary>执行了工具调用时触发（参数 = 工具名）</summary>
+    public System.Action<string> OnToolCalled;
+    /// <summary>工具调用有结果时触发</summary>
+    public System.Action<string, string> OnToolResult; // (toolName, result)
+    /// <summary>逐句切换时触发（参数：当前句子, 索引, 总数）</summary>
+    public System.Action<string, int, int> OnSentenceChanged;
+
+    // ==================================================================
+    //  状态
+    // ==================================================================
+
     private List<Entry> _history = new List<Entry>();
     private bool _isWaiting = false;
     private string _lastReply = "";
     private string _lastError = "";
     private System.Action _onUpdate;
 
+    // ---- 消息队列：等待时输入不会丢 ----
+    private Queue<(string text, System.Action onUpdate)> _messageQueue
+        = new Queue<(string, System.Action)>();
+
+    // ---- 句子队列：长回复逐句显示 ----
+    private List<string> _sentenceList = new List<string>();
+    private int _sentenceIdx = -1;
+    private float _sentenceTimer = 0f;
+    private bool _isSentenceAnimating = false;
+    private string _fullReplyText = "";
+    public float sentenceInterval = 2.5f;
+
     public bool IsWaiting => _isWaiting;
     public List<Entry> History => _history;
     public string LastReply => _lastReply;
     public string LastError => _lastError;
     public int HistoryCount => _history.Count;
+
+    // ---- 句子队列公开接口 ----
+    public bool IsSentenceAnimating => _isSentenceAnimating;
+    public bool HasMultiSentenceReply => _sentenceList.Count > 1;
+    public string CurrentSentence { get; private set; }
+    public int SentenceIndex => _sentenceIdx + 1;
+    public int SentenceCount => _sentenceList.Count;
+    public string FullReplyText => _fullReplyText;
+    /// <summary>句子列表（只读，供 ContextMenu 独立重播）</summary>
+    public List<string> SentenceList => _sentenceList;
+    /// <summary>每次新回复递增，用于外部检测是否有新回复</summary>
+    public int SentenceVersionId { get; private set; } = 0;
 
     /// <summary>获取用户和助手的历史记录（不含 system prompt）</summary>
     public List<Entry> GetVisibleHistory()
@@ -84,10 +150,21 @@ public class ChatManager : MonoBehaviour
         model = modelName;
     }
 
-    /// <summary>发送用户消息，onUpdate 回调用于刷新 UI</summary>
+    // ==================================================================
+    //  主动发送 / 触发 AI 对话（不含用户输入框）
+    // ==================================================================
+
+    /// <summary>直接发送一条消息（外部调用，如 AutoChat）</summary>
     public void SendMessage(string text, System.Action onUpdate)
     {
-        if (_isWaiting || string.IsNullOrWhiteSpace(text)) return;
+        if (string.IsNullOrWhiteSpace(text)) return;
+
+        if (_isWaiting)
+        {
+            // 排队，等当前回复完自动发
+            _messageQueue.Enqueue((text.Trim(), onUpdate));
+            return;
+        }
 
         _history.Add(new Entry { role = "user", content = text.Trim() });
         _isWaiting = true;
@@ -97,9 +174,192 @@ public class ChatManager : MonoBehaviour
         StartCoroutine(SendRequestCoroutine());
     }
 
+    // ==================================================================
+    //  核心：API 请求循环（支持多次 tool_call 回环）
+    // ==================================================================
+
+    private const int MAX_TOOL_ROUNDS = 5; // 防止无限循环
+
     private IEnumerator SendRequestCoroutine()
     {
-        string jsonBody = BuildRequestBody();
+        yield return StartCoroutine(DoToolLoop());
+
+        _isWaiting = false;
+        _onUpdate?.Invoke();
+
+        // ——— 处理队列中的下一条消息 ———
+        if (_messageQueue.Count > 0)
+        {
+            var next = _messageQueue.Dequeue();
+            SendMessage(next.text, next.onUpdate);
+        }
+    }
+
+    private IEnumerator DoToolLoop()
+    {
+        for (int round = 0; round <= MAX_TOOL_ROUNDS; round++)
+        {
+            string jsonBody = BuildRequestBody();
+            string responseJson = null;
+
+            // ——— 发送请求 ———
+            yield return StartCoroutine(PostRequest(jsonBody, j => responseJson = j));
+            if (responseJson == null) yield break; // 出错
+
+            // ——— 提取 tool_calls 和 content ———
+            string content = ExtractContent(responseJson);
+            string callsJson = ExtractToolCalls(responseJson);
+
+            bool hasToolCalls = !string.IsNullOrEmpty(callsJson) && callsJson != "[]";
+
+            // ——— 如果 AI 有文字回复 ———
+            if (!string.IsNullOrEmpty(content))
+            {
+                _history.Add(new Entry { role = "assistant", content = content });
+                _lastReply = content;
+                OnNewReply?.Invoke(content);
+                StartSentenceQueue(content);
+            }
+
+            // ——— 如果没有 tool_call，结束 ———
+            if (!hasToolCalls) yield break;
+
+            // ——— 解析并执行工具 ———
+            var calls = ParseToolCalls(callsJson);
+
+            // 先把 assistant 的消息（带 tool_calls 的）加入历史
+            _lastReply = content ?? "[施法中……]";
+
+            foreach (var call in calls)
+            {
+                // 通知外界
+                OnToolCalled?.Invoke(call.name);
+
+                // 执行
+                string result = toolInvoker
+                    ? toolInvoker.Execute(call.name, call.arguments, out _)
+                    : "法阵未就绪";
+
+                OnToolResult?.Invoke(call.name, result);
+
+                // 加入历史（tool 角色的回复）
+                _history.Add(new Entry
+                {
+                    role = "tool",
+                    content = result,
+                    tool_call_id = call.id,
+                    name = call.name
+                });
+            }
+            // 继续下一轮（让 AI 根据 tool 结果生成最终回复）
+        }
+
+        // 超过最大轮次
+        _lastReply = "♾️ 术式循环过久，本座暂且收阵。";
+        _history.Add(new Entry { role = "assistant", content = _lastReply });
+        OnNewReply?.Invoke(_lastReply);
+        StartSentenceQueue(_lastReply);
+    }
+
+    // ==================================================================
+    //  句子队列（逐句显示）
+    // ==================================================================
+
+    void Update()
+    {
+        if (!_isSentenceAnimating || _sentenceList.Count == 0) return;
+
+        _sentenceTimer += Time.deltaTime;
+        if (_sentenceTimer >= sentenceInterval)
+        {
+            _sentenceTimer = 0f;
+            _sentenceIdx++;
+
+            if (_sentenceIdx < _sentenceList.Count)
+            {
+                string sentence = _sentenceList[_sentenceIdx];
+                CurrentSentence = sentence;
+                OnSentenceChanged?.Invoke(sentence, _sentenceIdx, _sentenceList.Count);
+            }
+            else
+            {
+                // 全部播完
+                _isSentenceAnimating = false;
+                CurrentSentence = _fullReplyText;
+                OnSentenceChanged?.Invoke(_fullReplyText, _sentenceList.Count, _sentenceList.Count);
+            }
+        }
+    }
+
+    private List<string> SplitSentences(string text)
+    {
+        var result = new List<string>();
+        if (string.IsNullOrEmpty(text)) return result;
+        var separators = new char[] { '。', '！', '？', '.', '!', '?', '\n' };
+        int start = 0;
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (ContainsAny(separators, text[i]))
+            {
+                string seg = text.Substring(start, i - start + 1).Trim();
+                if (!string.IsNullOrEmpty(seg)) result.Add(seg);
+                start = i + 1;
+            }
+        }
+        if (start < text.Length)
+        {
+            string tail = text.Substring(start).Trim();
+            if (!string.IsNullOrEmpty(tail)) result.Add(tail);
+        }
+        return result;
+    }
+
+    private bool ContainsAny(char[] arr, char c)
+    {
+        for (int i = 0; i < arr.Length; i++)
+            if (arr[i] == c) return true;
+        return false;
+    }
+
+    /// <summary>收到完整回复后启动逐句队列</summary>
+    private void StartSentenceQueue(string fullText)
+    {
+        _fullReplyText = fullText;
+        _sentenceList = SplitSentences(fullText);
+        SentenceVersionId++; // 标记新回复
+
+        if (_sentenceList.Count <= 1)
+        {
+            _isSentenceAnimating = false;
+            CurrentSentence = fullText;
+            OnSentenceChanged?.Invoke(fullText, 0, 1);
+        }
+        else
+        {
+            _isSentenceAnimating = true;
+            _sentenceIdx = 0;
+            _sentenceTimer = 0f;
+            CurrentSentence = _sentenceList[0];
+            OnSentenceChanged?.Invoke(CurrentSentence, 0, _sentenceList.Count);
+        }
+    }
+
+    /// <summary>跳过逐句动画，直接显示完整文本</summary>
+    public void SkipSentenceAnimation()
+    {
+        if (!_isSentenceAnimating) return;
+        _isSentenceAnimating = false;
+        CurrentSentence = _fullReplyText;
+        _sentenceIdx = _sentenceList.Count;
+        OnSentenceChanged?.Invoke(_fullReplyText, _sentenceList.Count, _sentenceList.Count);
+    }
+
+    // ==================================================================
+    //  HTTP POST
+    // ==================================================================
+
+    private IEnumerator PostRequest(string jsonBody, System.Action<string> onResult)
+    {
         string fullUrl = apiUrl.TrimEnd('/') + "/v1/chat/completions";
 
         using (UnityWebRequest req = new UnityWebRequest(fullUrl, "POST"))
@@ -117,34 +377,24 @@ public class ChatManager : MonoBehaviour
 
             if (req.result == UnityWebRequest.Result.Success)
             {
-                string content = ExtractContent(req.downloadHandler.text);
-                if (!string.IsNullOrEmpty(content))
-                {
-                    _history.Add(new Entry { role = "assistant", content = content });
-                    _lastReply = content;
-                    OnNewReply?.Invoke(content);
-                }
-                else
-                {
-                    _lastError = "API 返回内容为空或格式异常";
-                }
+                onResult(req.downloadHandler.text);
             }
             else
             {
-                // 尝试读取错误信息中的详情
                 string errBody = req.downloadHandler?.text ?? "";
                 if (!string.IsNullOrEmpty(errBody) && errBody.Contains("\"message\""))
                     _lastError = ExtractErrorMessage(errBody);
                 else
                     _lastError = req.error;
+                onResult(null);
             }
         }
-
-        _isWaiting = false;
-        _onUpdate?.Invoke();
     }
 
-    /// <summary>构建请求 JSON</summary>
+    // ==================================================================
+    //  构建请求 JSON（含 tools 参数）
+    // ==================================================================
+
     private string BuildRequestBody()
     {
         StringBuilder sb = new StringBuilder();
@@ -152,7 +402,7 @@ public class ChatManager : MonoBehaviour
         sb.Append(EscapeJson(model));
         sb.Append("\",\"messages\":[");
 
-        // 先放 system prompt（角色设定）
+        // system prompt
         if (!string.IsNullOrEmpty(SystemPrompt))
         {
             sb.Append("{\"role\":\"system\",\"content\":\"");
@@ -160,27 +410,67 @@ public class ChatManager : MonoBehaviour
             sb.Append("\"}");
         }
 
+        // history
         for (int i = 0; i < _history.Count; i++)
         {
+            var e = _history[i];
             if (i > 0 || !string.IsNullOrEmpty(SystemPrompt)) sb.Append(",");
+
             sb.Append("{\"role\":\"");
-            sb.Append(_history[i].role);
-            sb.Append("\",\"content\":\"");
-            sb.Append(EscapeJson(_history[i].content));
+            sb.Append(EscapeJson(e.role));
+            sb.Append("\"");
+
+            if (e.role == "tool")
+            {
+                // tool 角色需要 tool_call_id 和 name
+                sb.Append(",\"tool_call_id\":\"");
+                sb.Append(EscapeJson(e.tool_call_id ?? ""));
+                sb.Append("\",\"name\":\"");
+                sb.Append(EscapeJson(e.name ?? ""));
+                sb.Append("\"");
+            }
+
+            sb.Append(",\"content\":\"");
+            sb.Append(EscapeJson(e.content ?? ""));
             sb.Append("\"}");
         }
 
-        sb.Append("],\"stream\":false}");
+        sb.Append("]");
+
+        // ——— 附加 tools 定义 ———
+        if (enableTools && toolInvoker != null)
+        {
+            sb.Append(",\"tools\":");
+            sb.Append(toolInvoker.GetToolsJson());
+        }
+
+        sb.Append(",\"stream\":false}");
         return sb.ToString();
     }
 
-    /// <summary>从响应 JSON 中提取 content 字段</summary>
+    // ==================================================================
+    //  响应解析
+    // ==================================================================
+
+    /// <summary>提取 content 字段（普通回复）</summary>
     private string ExtractContent(string json)
     {
-        // 查找 "choices":[...,{"message":{"content":"..."}}]
+        // 先看 message 里有没有 content
+        // DeepSeek 格式: "choices":[{"message":{"content":"..."}}]
+        int msgIdx = json.IndexOf("\"message\"");
+        if (msgIdx < 0) return "";
+
+        // 从 message 末尾找 content
         string key = "\"content\":\"";
-        int idx = json.IndexOf(key);
-        if (idx < 0) return "";
+        int idx = json.IndexOf(key, msgIdx);
+        if (idx < 0)
+        {
+            // 可能 content 为 null（纯 tool_call 回复）
+            // 格式: "content":null
+            int nullIdx = json.IndexOf("\"content\":null", msgIdx);
+            if (nullIdx >= 0) return "";
+            return "";
+        }
 
         idx += key.Length;
         StringBuilder content = new StringBuilder();
@@ -211,6 +501,114 @@ public class ChatManager : MonoBehaviour
         return content.ToString();
     }
 
+    /// <summary>提取 tool_calls JSON 块</summary>
+    private string ExtractToolCalls(string json)
+    {
+        // 查找 "tool_calls":[{...}]
+        string key = "\"tool_calls\":";
+        int idx = json.IndexOf(key);
+        if (idx < 0) return "[]";
+
+        idx += key.Length;
+        // 找到匹配的 ] 结束
+        int depth = 1; // 当前已经是 [
+        int start = idx;
+        for (int i = idx + 1; i < json.Length; i++)
+        {
+            if (json[i] == '[') depth++;
+            else if (json[i] == ']') { depth--; if (depth == 0) return json.Substring(start, i - start + 1); }
+        }
+        return "[]";
+    }
+
+    private struct ToolCallInfo
+    {
+        public string id;
+        public string name;
+        public string arguments;
+    }
+
+    private List<ToolCallInfo> ParseToolCalls(string callsJson)
+    {
+        var list = new List<ToolCallInfo>();
+
+        // 简易解析: 依次找 id, function.name, function.arguments
+        int pos = 0;
+        while (true)
+        {
+            // 找下一个 "id":"...  （在同一 tool_call 对象内）
+            int idIdx = callsJson.IndexOf("\"id\":\"", pos);
+            if (idIdx < 0) break;
+
+            string id = ExtractSimpleString(callsJson, idIdx + 6);
+
+            int nameIdx = callsJson.IndexOf("\"name\":\"", idIdx);
+            string name = nameIdx >= 0 ? ExtractSimpleString(callsJson, nameIdx + 8) : "";
+
+            int argIdx = callsJson.IndexOf("\"arguments\":", idIdx);
+            string args = "";
+            if (argIdx >= 0)
+            {
+                argIdx += 12; // skip "\"arguments\":" 
+                // arguments 可能是一个 JSON 对象字符串: "\"{...}\"" 或 JSON 对象 {...}
+                if (argIdx < callsJson.Length && callsJson[argIdx] == '"')
+                {
+                    // 字符串: 提取并转义还原
+                    args = ExtractSimpleString(callsJson, argIdx + 1);
+                    args = args.Replace("\\\"", "\"").Replace("\\n", "\n").Replace("\\t", "\t").Replace("\\\\", "\\");
+                }
+                else
+                {
+                    // JSON 对象: 提取 {...} 块
+                    int objStart = argIdx;
+                    if (callsJson[objStart] == '{')
+                    {
+                        int d = 1;
+                        for (int i = objStart + 1; i < callsJson.Length; i++)
+                        {
+                            if (callsJson[i] == '{') d++;
+                            else if (callsJson[i] == '}') { d--; if (d == 0) { args = callsJson.Substring(objStart, i - objStart + 1); break; } }
+                        }
+                    }
+                }
+            }
+
+            list.Add(new ToolCallInfo { id = id, name = name, arguments = args });
+            pos = idIdx + 1;
+        }
+
+        return list;
+    }
+
+    /// <summary>从 JSON 中提取 "key":"value" 中 value 部分的纯字符串</summary>
+    private static string ExtractSimpleString(string json, int start)
+    {
+        if (start >= json.Length) return "";
+        var sb = new StringBuilder();
+        for (int i = start; i < json.Length; i++)
+        {
+            if (json[i] == '\\' && i + 1 < json.Length)
+            {
+                char n = json[i + 1];
+                if (n == '"') { sb.Append('"'); i++; }
+                else if (n == '\\') { sb.Append('\\'); i++; }
+                else if (n == 'n') { sb.Append('\n'); i++; }
+                else if (n == 't') { sb.Append('\t'); i++; }
+                else if (n == 'r') { i++; }
+                else sb.Append(json[i]);
+            }
+            else if (json[i] == '"')
+            {
+                break;
+            }
+            else
+            {
+                sb.Append(json[i]);
+            }
+        }
+        return sb.ToString();
+    }
+
     /// <summary>从错误 JSON 中提取 message 字段</summary>
     private string ExtractErrorMessage(string json)
     {
@@ -227,6 +625,10 @@ public class ChatManager : MonoBehaviour
         }
         return msg.ToString();
     }
+
+    // ==================================================================
+    //  工具
+    // ==================================================================
 
     private string EscapeJson(string s)
     {

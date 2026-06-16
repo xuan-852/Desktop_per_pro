@@ -36,6 +36,13 @@ public class ContextMenu : MonoBehaviour
     private Vector2 _chatScrollPos = Vector2.zero;
     private bool _chatShowConfig = false;
 
+    // ===== 句子队列本地计时器（逐句重播） =====
+    private int _localSentenceIdx = 0;
+    private float _localSentenceTimer = 0f;
+    private int _lastSentenceVersion = -1;
+    private bool _isLocalAnimating = false;
+    public float localSentenceInterval = 1.8f;
+
     // ===== 调试信息 =====
     private string _debugInfo = "";
 
@@ -69,6 +76,11 @@ public class ContextMenu : MonoBehaviour
         // 聊天管理器
         _chat = GetComponent<ChatManager>();
         if (_chat == null) _chat = gameObject.AddComponent<ChatManager>();
+
+        // 工具调用（符玄法阵）
+        var toolInvoker = GetComponent<ToolCallInvoker>();
+        if (toolInvoker == null) toolInvoker = gameObject.AddComponent<ToolCallInvoker>();
+        _chat.toolInvoker = toolInvoker;
 
         // 自动聊天（定时问候 + 互动事件 + 气泡）
         var autoChat = GetComponent<AutoChat>();
@@ -177,6 +189,9 @@ public class ContextMenu : MonoBehaviour
         _currentTab = Tab.设置;   // 默认打开设置
         _scrollPos = Vector2.zero;
 
+        // ★ 重置聊天状态同步
+        _lastSentenceVersion = -1;
+
         // ★ 暂停宠物运动
         if (_pet != null)
         {
@@ -213,6 +228,43 @@ public class ContextMenu : MonoBehaviour
 
     public bool IsOpen => _isOpen;
     public bool IsMouseOverMenu(Vector2 mousePos) => _isOpen && _menuRect.Contains(mousePos);
+
+    #endregion
+
+    #region 本地句子队列计时器
+
+    void Update()
+    {
+        if (!_isLocalAnimating || _chat == null || !_chat.HasMultiSentenceReply || !_isOpen) return;
+
+        _localSentenceTimer += Time.deltaTime;
+        if (_localSentenceTimer >= localSentenceInterval)
+        {
+            _localSentenceTimer = 0f;
+            _localSentenceIdx++;
+
+            if (_localSentenceIdx >= _chat.SentenceList.Count)
+            {
+                _isLocalAnimating = false;
+                _localSentenceIdx = _chat.SentenceList.Count - 1;
+            }
+        }
+    }
+
+    /// <summary>每次绘制聊天标签时调用：检测新回复，重置本地索引</summary>
+    private void CheckLocalSentenceState()
+    {
+        if (_chat == null) return;
+
+        // 有新回复 → 重置本地计时器
+        if (_chat.SentenceVersionId != _lastSentenceVersion)
+        {
+            _lastSentenceVersion = _chat.SentenceVersionId;
+            _localSentenceIdx = 0;
+            _localSentenceTimer = 0f;
+            _isLocalAnimating = _chat.HasMultiSentenceReply;
+        }
+    }
 
     #endregion
 
@@ -387,6 +439,9 @@ public class ContextMenu : MonoBehaviour
             return;
         }
 
+        // ——— 本地句子队列：逐句重播 ——
+        CheckLocalSentenceState();
+
         // ——— 消息显示区域 ———
         float areaHeight = _menuHeight - 280f;
         float areaWidth = _menuWidth - 20f;
@@ -404,11 +459,49 @@ public class ContextMenu : MonoBehaviour
         }
         else
         {
-            foreach (var entry in visibleHistory)
+            // 找到最后一个 assistant 条目的索引（有句子队列时才需要逐句显示）
+            int lastAssistantIdx = -1;
+            if (_chat.HasMultiSentenceReply)
             {
+                for (int j = visibleHistory.Count - 1; j >= 0; j--)
+                {
+                    if (visibleHistory[j].role == "assistant")
+                    {
+                        lastAssistantIdx = j;
+                        break;
+                    }
+                }
+            }
+
+            for (int i = 0; i < visibleHistory.Count; i++)
+            {
+                var entry = visibleHistory[i];
                 string prefix = entry.role == "user" ? "🧑 " : "🌸 ";
                 GUIStyle style = entry.role == "user" ? _chatUserStyle : _chatMsgStyle;
-                GUILayout.Label(prefix + entry.content, style);
+
+                // 有句子列表且是最后一个助手条目 → 用本地索引逐句显示
+                bool hasSentences = _chat.HasMultiSentenceReply && i == lastAssistantIdx && entry.role == "assistant";
+                if (hasSentences)
+                {
+                    string content, progress;
+                    if (_isLocalAnimating)
+                    {
+                        var list = _chat.SentenceList;
+                        int idx = Mathf.Clamp(_localSentenceIdx, 0, list.Count - 1);
+                        content = idx < list.Count ? list[idx] : entry.content;
+                        progress = $" ({idx + 1}/{list.Count})";
+                    }
+                    else
+                    {
+                        content = _chat.FullReplyText;
+                        progress = "";
+                    }
+                    GUILayout.Label(prefix + content + progress, style);
+                }
+                else
+                {
+                    GUILayout.Label(prefix + entry.content, style);
+                }
                 GUILayout.Space(2);
             }
         }
@@ -464,6 +557,10 @@ public class ContextMenu : MonoBehaviour
             string msg = _chatInputText;
             _chatInputText = "";
             _chatScrollPos = new Vector2(0, float.MaxValue);
+            // 用户发新消息时跳过逐句动画
+            if (_isLocalAnimating || _chat.IsSentenceAnimating) _chat.SkipSentenceAnimation();
+            _isLocalAnimating = false;
+            _localSentenceIdx = 0;
             _chat.SendMessage(msg, () => { _chatScrollPos = new Vector2(0, float.MaxValue); });
             GUI.FocusControl(null);
         }

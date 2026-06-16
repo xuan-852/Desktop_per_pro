@@ -84,6 +84,15 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     const float BLUSH_LOOK_AWAY    = -8f;    // 眼神躲闪
     const float BLUSH_SMILE        = 0.5f;   // 害羞微笑
 
+    // 动作11: 困惑 🤔（歪头+皱眉+眯眼，只在 AI 困惑时触发）
+    const float CONFUSE_DURATION    = 3f;
+    const float CONFUSE_TILT        = 15f;    // 歪头幅度
+    const float CONFUSE_BROW        = -3f;    // 皱眉（负=压低）
+    const float CONFUSE_EYE_SQUINT  = 0.15f;  // 眯眼幅度
+    const float CONFUSE_MOUTH       = 0.2f;   // 微微张嘴
+    const float CONFUSE_HEAD_SIDE   = -5f;    // 头侧偏
+    const float CONFUSE_BODY_SIDE   = 3f;     // 身体微侧
+
     // 动作9: 法阵显现 ✨（起势→剑指朝天结印→指尖凝光→扩散至全屏→消散）
     const float CIRCLE_DURATION       = 8.0f;
     // -- 走路（侧面视角）--
@@ -149,9 +158,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     // 随机小动作（站立时触发）
     private float _idleActionTime = 0f;
     private float _idleActionInterval = 8f;
-    private int _currentIdleAction = 0; // 0=无, 1=歪头, 2=微笑, 3=挑眉, 4=星辉, 5=伸懒腰, 6=爱心眼, 7=数钱, 8=委屈, 9=法阵, 10=害羞
-    // 各动作权重（对应动作 1-10），值越大出现概率越高
-    private readonly int[] _idleActionWeights = new int[] { 5, 5, 3, 2, 2, 3, 2, 3, 1, 3 };
+    private int _currentIdleAction = 0; // 0=无, 1=歪头, 2=微笑, 3=挑眉, 4=星辉, 5=伸懒腰, 6=爱心眼, 7=数钱, 8=委屈, 9=法阵, 10=害羞, 11=困惑
+    // 各动作权重（对应动作 1-11），值越大出现概率越高（11号权重0=不自发触发，仅外部强制调用）
+    private readonly int[] _idleActionWeights = new int[] { 5, 5, 3, 2, 2, 3, 2, 3, 1, 3, 0 };
     // 复合动作相位（用于多参数协同插值）
     private float _complexActionPhase = 0f;
 
@@ -449,6 +458,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
                 case 8: UpdateCry(); break;
                 case 9: UpdateMagicCircle(); break;
                 case 10: UpdateBlush(); break;
+                case 11: UpdateConfuse(); break;
             }
         }
     }
@@ -740,6 +750,42 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
         // 嘴巴微张（欲言又止）
         SetParameter("ParamMouthForm", eased * 0.3f);
+
+        if (t >= 1f) ResetIdleAction();
+    }
+
+    /// <summary>
+    /// 动作11: 困惑 🤔
+    /// 歪头+皱眉+眯眼+嘴巴微张 — 像小狗听不懂时歪头那样
+    /// 权重为 0，不自发触发，仅当 AI 回复困惑内容时由 AutoChat 强制调用
+    /// </summary>
+    private void UpdateConfuse()
+    {
+        float p = _complexActionPhase;
+        float duration = CONFUSE_DURATION;
+
+        float t = Mathf.Clamp01(p / duration);
+        float eased = Mathf.Sin(t * Mathf.PI);
+
+        // 歪头（经典困惑姿势）
+        SetParameter("ParamAngleZ", eased * CONFUSE_TILT);
+
+        // 头微微偏
+        SetParameter("ParamAngleX", eased * CONFUSE_HEAD_SIDE);
+
+        // 皱眉（压低眉毛）
+        SetParameter("ParamBrowRY", eased * CONFUSE_BROW);
+        SetParameter("ParamBrowLY", eased * CONFUSE_BROW);
+
+        // 微微眯眼（困惑地打量）
+        SetParameter("ParamEyeLOpen", 1f - eased * CONFUSE_EYE_SQUINT);
+        SetParameter("ParamEyeROpen", 1f - eased * CONFUSE_EYE_SQUINT);
+
+        // 嘴巴微张
+        SetParameter("ParamMouthForm", eased * CONFUSE_MOUTH);
+
+        // 身体微侧
+        SetParameter("ParamBodyAngleZ", eased * CONFUSE_BODY_SIDE);
 
         if (t >= 1f) ResetIdleAction();
     }

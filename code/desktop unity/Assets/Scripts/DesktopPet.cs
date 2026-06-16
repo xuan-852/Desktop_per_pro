@@ -215,6 +215,13 @@ public class DesktopPet : MonoBehaviour
             Debug.Log("[DesktopPet] 自动添加了 HybridRenderer 组件");
         }
 
+        // 自动确保底部输入栏存在
+        if (GetComponent<BottomInputBar>() == null)
+        {
+            gameObject.AddComponent<BottomInputBar>();
+            Debug.Log("[DesktopPet] 自动添加了 BottomInputBar 组件");
+        }
+
         // 获取渲染器引用：优先使用 HybridRenderer
         var hybrid = GetComponent<HybridRenderer>();
         if (hybrid != null)
