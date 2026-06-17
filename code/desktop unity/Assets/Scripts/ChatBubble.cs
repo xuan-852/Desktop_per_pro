@@ -29,6 +29,7 @@ public class ChatBubble : MonoBehaviour
     public Color shadowColor = new Color(0f, 0f, 0f, 0.25f);
 
     private DesktopPet _pet;
+    private Live2DRenderer _renderer;
     private string _currentText = "";
     private float _messageStartTime = -1f;
     private bool _hasMessage = false;
@@ -57,6 +58,8 @@ public class ChatBubble : MonoBehaviour
     {
         _pet = GetComponent<DesktopPet>();
         if (_pet == null) _pet = FindObjectOfType<DesktopPet>();
+        _renderer = GetComponent<Live2DRenderer>();
+        if (_renderer == null) _renderer = FindObjectOfType<Live2DRenderer>();
     }
 
     // ============================================================
@@ -148,7 +151,9 @@ public class ChatBubble : MonoBehaviour
 
         // ---- 定位 ----
         float centerX = _pet.petX + _pet.petWidth / 2f;
-        float bubbleBottom = Mathf.Max(_pet.petY - topOffset, 10f);
+        // 气泡跟随模型视觉位置（考虑垂直偏移）
+        float visualOffset = (_renderer != null) ? _renderer.verticalOffset : 0f;
+        float bubbleBottom = Mathf.Max(_pet.petY + visualOffset - topOffset, 10f);
 
         float bx = centerX - _bubbleWidth / 2f;
         float by = bubbleBottom - _bubbleHeight - tailHeight;

@@ -199,9 +199,11 @@ public class ContextMenu : MonoBehaviour
         _wRightTime = _pet.taskWeightMoveRightTime;
         _wStop = _pet.taskWeightStopTime;
 
-        // 定位菜单
-        float x = Mathf.Clamp(screenPos.x, 10, Screen.width - _menuWidth - 10);
-        float y = Mathf.Clamp(screenPos.y, 10, Screen.height - _menuHeight - 10);
+        // 定位菜单 — 相对于模型头顶位置
+        float headCenterX = _pet.petX + _pet.petWidth / 2f;
+        float headY = _pet.petY;
+        float x = Mathf.Clamp(headCenterX - _menuWidth / 2f, 10, Screen.width - _menuWidth - 10);
+        float y = Mathf.Clamp(headY - _menuHeight - 10, 10, Screen.height - _menuHeight - 10);
         _menuRect = new Rect(x, y, _menuWidth, _menuHeight);
     }
 
@@ -329,12 +331,19 @@ public class ContextMenu : MonoBehaviour
 
         GUILayout.EndScrollView();
 
-        // ===== 底部关闭按钮 =====
+        // ===== 底部按钮行 =====
         GUILayout.FlexibleSpace();
         GUILayout.BeginHorizontal();
         GUILayout.FlexibleSpace();
         if (GUILayout.Button("✕ 关闭", _closeButtonStyle, GUILayout.Width(80), GUILayout.Height(24)))
             Close();
+        if (GUILayout.Button("⏻ 退出", _closeButtonStyle, GUILayout.Width(80), GUILayout.Height(24)))
+        {
+            Close();
+#if !UNITY_EDITOR
+            Application.Quit();
+#endif
+        }
         GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
 
@@ -478,100 +487,13 @@ public class ContextMenu : MonoBehaviour
             return;
         }
 
-        // ——— 本地句子队列：逐句重播 ——
         CheckLocalSentenceState();
 
-        // ——— 消息显示区域 ———
-        float areaHeight = _menuHeight - 280f;
-        float areaWidth = _menuWidth - 20f;
-
-        GUILayout.BeginVertical(new GUIStyle { normal = { background = _inputBg },
-            padding = new RectOffset(4, 4, 4, 4) });
-
-        _chatScrollPos = GUILayout.BeginScrollView(_chatScrollPos, false, true,
-            GUILayout.Width(areaWidth), GUILayout.Height(areaHeight));
-
-        var visibleHistory = _chat.GetVisibleHistory();
-        if (visibleHistory.Count == 0)
-        {
-            GUILayout.Label("💡 开始和符玄聊天吧", _labelStyle);
-        }
-        else
-        {
-            // 找到最后一个 assistant 条目的索引（有句子队列时才需要逐句显示）
-            int lastAssistantIdx = -1;
-            if (_chat.HasMultiSentenceReply)
-            {
-                for (int j = visibleHistory.Count - 1; j >= 0; j--)
-                {
-                    if (visibleHistory[j].role == "assistant")
-                    {
-                        lastAssistantIdx = j;
-                        break;
-                    }
-                }
-            }
-
-            for (int i = 0; i < visibleHistory.Count; i++)
-            {
-                var entry = visibleHistory[i];
-                string prefix = entry.role == "user" ? "🧑 " : "🌸 ";
-                GUIStyle style = entry.role == "user" ? _chatUserStyle : _chatMsgStyle;
-
-                // 有句子列表且是最后一个助手条目 → 用本地索引逐句显示
-                bool hasSentences = _chat.HasMultiSentenceReply && i == lastAssistantIdx && entry.role == "assistant";
-                if (hasSentences)
-                {
-                    string content, progress;
-                    if (_isLocalAnimating)
-                    {
-                        var list = _chat.SentenceList;
-                        int idx = Mathf.Clamp(_localSentenceIdx, 0, list.Count - 1);
-                        content = idx < list.Count ? list[idx] : entry.content;
-                        progress = $" ({idx + 1}/{list.Count})";
-                    }
-                    else
-                    {
-                        content = _chat.FullReplyText;
-                        progress = "";
-                    }
-                    GUILayout.Label(prefix + content + progress, style);
-                }
-                else
-                {
-                    GUILayout.Label(prefix + entry.content, style);
-                }
-                GUILayout.Space(2);
-            }
-        }
-
-        // 等待状态
-        if (_chat.IsWaiting)
-        {
-            GUILayout.Label("🌸 符玄正在思考...", _chatMsgStyle);
-        }
-
-        GUILayout.EndScrollView();
-        GUILayout.EndVertical();
-
-        // ——— 错误/状态提示 ———
-        if (!string.IsNullOrEmpty(_chat.LastError))
-        {
-            GUIStyle errStyle = new GUIStyle(_labelStyle) { normal = { textColor = Color.red } };
-            GUILayout.Label("⚠ " + _chat.LastError, errStyle);
-        }
-        else if (!string.IsNullOrEmpty(_chatStatusMsg))
-        {
-            GUIStyle statusStyle = new GUIStyle(_labelStyle) { normal = { textColor = _chatStatusColor } };
-            GUILayout.Label(_chatStatusMsg, statusStyle);
-        }
-
-        GUILayout.Space(4);
-
-        // ——— 输入区域 ———
+        // ——— 输入区域（用 MinHeight 撑满可见区，推到菜单底部） ———
+        GUILayout.BeginVertical(GUILayout.MinHeight(_menuHeight - 90));
+        GUILayout.FlexibleSpace();
         GUILayout.BeginHorizontal();
 
-        // 按 Enter 发送
         bool enterPressed = Event.current.isKey
             && Event.current.type == EventType.KeyDown
             && (Event.current.keyCode == KeyCode.Return || Event.current.keyCode == KeyCode.KeypadEnter)
@@ -579,7 +501,7 @@ public class ContextMenu : MonoBehaviour
 
         GUI.SetNextControlName("chatInput");
         _chatInputText = GUILayout.TextField(_chatInputText, _textFieldStyle,
-            GUILayout.Height(24), GUILayout.MinWidth(160));
+            GUILayout.Height(24), GUILayout.MinWidth(200));
 
         bool canSend = !string.IsNullOrWhiteSpace(_chatInputText) && !_chat.IsWaiting;
 
@@ -595,35 +517,15 @@ public class ContextMenu : MonoBehaviour
             Event.current.Use();
             string msg = _chatInputText;
             _chatInputText = "";
-            _chatScrollPos = new Vector2(0, float.MaxValue);
-            // 用户发新消息时跳过逐句动画
             if (_isLocalAnimating || _chat.IsSentenceAnimating) _chat.SkipSentenceAnimation();
             _isLocalAnimating = false;
             _localSentenceIdx = 0;
-            _chat.SendMessage(msg, () => { _chatScrollPos = new Vector2(0, float.MaxValue); });
+            _chat.SendMessage(msg, null);
             GUI.FocusControl(null);
         }
 
         GUILayout.EndHorizontal();
-
-        GUILayout.Space(4);
-
-        // ——— 底部工具栏 ———
-        GUILayout.BeginHorizontal();
-
-        if (GUILayout.Button("📋 复制聊天", _buttonStyle, GUILayout.Height(22)))
-        {
-            CopyChatToClipboard();
-        }
-
-        if (GUILayout.Button("🗑 清空", _buttonStyle, GUILayout.Height(22)))
-        {
-            _chat.ClearHistory();
-            _chatStatusMsg = "对话已清空";
-            _chatStatusColor = Color.gray;
-        }
-
-        GUILayout.EndHorizontal();
+        GUILayout.EndVertical();
     }
 
     #endregion

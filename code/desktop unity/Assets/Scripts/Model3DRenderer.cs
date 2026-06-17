@@ -84,8 +84,8 @@ public class Model3DRenderer : MonoBehaviour, IPetRenderer
         cam.orthographic = true;
         cam.orthographicSize = orthoSize;
 
-        // 2. 保持绿色背景（Color Key 用）
-        cam.backgroundColor = new Color(0f, 1f, 0f, 1f);
+        // 2. 纯黑背景（DWM 玻璃层透明用，黑色=透明）
+        cam.backgroundColor = new Color(0f, 0f, 0f, 0f);
 
         // 3. 清除标记设为纯色（不画天空盒）
         cam.clearFlags = CameraClearFlags.SolidColor;

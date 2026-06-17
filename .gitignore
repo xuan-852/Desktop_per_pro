@@ -6,6 +6,23 @@ code/desktop unity/[Tt]emp/
 code/desktop unity/[Oo]bj/
 code/desktop unity/[Bb]uild/
 code/desktop unity/[Bb]uilds/
+
+# ================
+# LaTeX 构建产物
+# ================
+project_brief/*.aux
+project_brief/*.out
+project_brief/*.toc
+project_brief/*.log
+project_brief/*.synctex.gz
+project_brief/*.fls
+project_brief/*.fdb_latexmk
+
+# ================
+# Unity 构建日志
+# ================
+code/desktop unity/build_log.txt
+[Bb]uild/
 code/desktop unity/[Ll]ogs/
 code/desktop unity/[Uu]ser[Ss]ettings/
 code/desktop unity/*.csproj

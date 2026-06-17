@@ -27,8 +27,8 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     // ===================================================================
     // ===== 🎛️ 调参区 — 改这里 =====
     // ===================================================================
-    const float LIVE2D_SCALE       = 200f;    // 模型缩放（越大→模型越大）
-    const float LIVE2D_OFFSET_Y    = 100f;    // 垂直偏移（正数=下移，负数=上移）
+    const float LIVE2D_SCALE       = 56.25f; // 模型缩放（越大→模型越大）
+    const float LIVE2D_OFFSET_Y    = 0f;      // 垂直偏移（正数=下移，负数=上移）
     // ===================================================================
 
     // ================ 动画参数 ================
@@ -985,58 +985,12 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     }
 
     /// <summary>
-    /// 动作4: 星辉环绕 ✨
-    /// 紫环旋转 + 星星闪烁 — 像法阵一样黑幕+发光
+    /// 动作4: 星辉环绕 ✨（已移除视觉特效，仅保留动作时长）
     /// </summary>
     private void UpdateStarSpin()
     {
-        float p = _complexActionPhase;
         float duration = SPIN_DURATION;
-
-        // 总进度 0→1, 缓入缓出
-        float t = Mathf.Clamp01(p / duration);
-        float eased = Mathf.Sin(t * Mathf.PI); // 0→1→0 平滑
-
-        // ★ 黑幕背景（像法阵一样，让星辉发光更明显）
-        float darkIn = Mathf.Clamp01((p - 0f) / (duration * 0.15f));       // 快开
-        float darkOut = Mathf.Clamp01((duration - p) / (duration * 0.2f));  // 渐消
-        float dark = darkIn * darkOut;
-        SetParameter("Param121", Mathf.Clamp01(dark * 1.2f)); // 黑幕切换（略超1确保完全开启）
-        SetParameter("Param137", dark * 0.8f);                // 黑幕显示
-        SetParameter("Param132", dark * 0.8f);                // 眼镜发光
-
-        // ★ 环显隐 + 大小（必须设显隐环才会出现）
-        float ringVis = Mathf.Clamp01(eased * 1.3f); // 略超1让环更亮
-        SetParameter("Param431", ringVis);       // 外紫环显隐
-        SetParameter("Param911", ringVis);       // 中紫环显隐
-        SetParameter("Param741", ringVis);       // 内紫环显隐
-        SetParameter("Param441", eased * 1f);  // 外紫环大小
-        SetParameter("Param961", eased * 1f);  // 中紫环大小
-        SetParameter("Param731", eased * 1f);  // 内紫环大小
-
-        // 三环旋转（内中外，不同速度）
-        SetParameter("Param421", Mathf.Sin(p * 2f) * eased * SPIN_RING_OUTER);    // 外紫环 转 (ParamGroup20)
-        SetParameter("Param422", Mathf.Sin(p * 2f) * eased * SPIN_RING_OUTER);    // 外紫环 转 (ParamGroup21)
-        SetParameter("Param901", Mathf.Sin(p * 2.7f) * eased * SPIN_RING_MID);   // 中紫环 转 (ParamGroup20)
-        SetParameter("Param902", Mathf.Sin(p * 2.7f) * eased * SPIN_RING_MID);   // 中紫环 转 (ParamGroup21)
-        SetParameter("Param881", Mathf.Sin(p * 3.5f) * eased * SPIN_RING_INNER); // 内紫环 转 (ParamGroup20)
-        SetParameter("Param882", Mathf.Sin(p * 3.5f) * eased * SPIN_RING_INNER); // 内紫环 转 (ParamGroup21)
-
-        // 蒙版加强（让环更亮更明显）
-        float maskBoost = Mathf.Clamp01(eased * 1.2f);
-        SetParameter("Param401", maskBoost * 0.8f); // 外蒙版
-        SetParameter("Param411", maskBoost * 0.7f); // 中蒙版
-        SetParameter("Param891", maskBoost * 0.7f); // 内蒙版
-
-        // 星星显隐 + 大小（呼吸闪烁）
-        float starPulse = (Mathf.Sin(p * 3f) + 1f) * 0.5f * eased;
-        SetParameter("Param451", starPulse * 1.2f);   // 星显隐（加强）
-        SetParameter("Param541", starPulse * 0.8f); // 星大小
-
-        // 外围星
-        float outerStar = (Mathf.Sin(p * 2.3f) + 1f) * 0.5f * eased;
-        SetParameter("Param1071", outerStar * 0.6f); // 外围星变大
-        SetParameter("Param1081", outerStar * 0.8f); // 外星出现
+        float t = Mathf.Clamp01(_complexActionPhase / duration);
 
         if (t >= 1f) ResetIdleAction();
     }
@@ -1137,12 +1091,6 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
         // 数钱表情（Param122 = 钱）
         SetParameter("Param122", eased);
-
-        // ★ 双眼放光（像法阵那样的眼镜发光效果）
-        float glow = Mathf.Clamp01(eased * 1.1f);
-        SetParameter("Param121", glow * 0.6f);  // 黑幕切换（半透明黑幕衬托发光）
-        SetParameter("Param137", glow * 0.4f);  // 黑幕显示
-        SetParameter("Param132", glow * 0.7f);  // 眼镜发光 ✨
 
         // 微笑（美滋滋）
         SetParameter("ParamEyeLSmile", eased * MONEY_SMILE);
@@ -1305,87 +1253,43 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         // ★ Param92 全程保持剑指模式（不随h渐消，防10指重叠）
         SetParameter("Param92", 1f);
 
-        // ==================== Phase1: 起势 — 缓入 ====================
+        // ===== 仅保留身体姿态和手势，已移除所有视觉特效参数 =====
         if (t < 0.20f)
         {
-            float phase1 = t / 0.20f;
-            float h = EaseInCubic(phase1);
-            SetParameter("Param132", phase1 * 0.8f);
-            SetParameter("Param154", phase1 * 0.8f);
-            SetParameter("Param133", 0);
-            SetParameter("Param136", 0);
-            SetParameter("Param134", 0);
-            SetParameter("Param135", 0);
+            float h = EaseInCubic(t / 0.20f);
             SetHandPose(h);
             SetSwordFinger(h);
             return;
         }
 
-        // ==================== Phase2: 剑指成型 ====================
         if (t < 0.45f)
         {
-            float platePulse = (Mathf.Sin(p * 3.5f) * 0.5f + 0.5f) * 0.8f;
-            SetParameter("Param132", 0.8f);
-            SetParameter("Param154", platePulse);
-            SetParameter("Param133", 0);
-            SetParameter("Param136", 0);
-            SetParameter("Param134", 0);
-            SetParameter("Param135", 0);
             SetHandPose(1f);
             SetSwordFinger(1f);
             return;
         }
 
-        // ==================== Phase3: 指尖凝光 ====================
         if (t < 0.50f)
         {
-            float phase3 = (t - 0.38f) / 0.12f;
-            SetParameter("Param133", phase3 * 5f);
-            SetParameter("Param136", phase3);
-            SetParameter("Param134", 0);
-            SetParameter("Param135", 0);
-            SetParameter("Param132", 0.8f - phase3 * 0.56f);
-            SetParameter("Param154", 0.8f - phase3 * 0.56f);
             SetHandPose(1f);
             SetSwordFinger(1f);
             return;
         }
 
-        // ==================== Phase4: 白光扩散 ====================
         if (t < 0.75f)
         {
-            float phase4 = (t - 0.48f) / 0.27f;
-            float h = 1f - EaseOutQuad(phase4);
-            // 白圈扩散
-            SetParameter("Param133", 5f + phase4 * 55f);
-            SetParameter("Param136", 1f - phase4);
-            SetParameter("Param134", 0);
-            SetParameter("Param135", 0);
-            SetParameter("Param157", -phase4 * 0.15f);
-            SetParameter("Param156", -phase4 * 3f);
-            SetParameter("Param132", 0.24f - phase4 * 0.24f);
-            SetParameter("Param154", 0.24f - phase4 * 0.24f);
-            // ★ 手缓慢消退（图层保持最前，仅pose消退）
+            float h = 1f - EaseOutQuad((t - 0.48f) / 0.27f);
             SetHandPose(h);
             SetSwordFinger(h);
             return;
         }
 
-        // ==================== Phase5: 消散 ====================
+        // ===== Phase5: 消散 =====
         {
             float phase5 = (t - 0.75f) / 0.25f;
             float fade = 1f - EaseOutQuad(phase5);
-            // 身体回正
             SetParameter("ParamBodyAngleX", fade * -8f);
             SetParameter("ParamAngleX", fade * -10f);
-            // 镜头回正 + 人物恢复大小（白圈在Phase4已消退完，不重设避免闪第二次）
-            SetParameter("Param157", fade * -0.15f);
-            SetParameter("Param156", fade * -3f);
-            SetParameter("Param134", 0);
-            SetParameter("Param135", 0);
-            SetParameter("Param132", 0);
-            SetParameter("Param154", 0);
-            // ★ 手部图层消退 + 切回普通手指模式（pose已在Phase4消退完，不再重设）
             SetHandLayer(fade);
             SetParameter("Param92", fade);
             if (t >= 1f) ResetIdleAction();
@@ -1463,24 +1367,6 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("ParamEyeLOpen", 1f);
         SetParameter("ParamEyeROpen", 1f);
         SetParameter("Param109", 0f); // 爱心眼
-        SetParameter("Param451", 0f); // 星显隐
-        SetParameter("Param541", 0f); // 星大小
-        SetParameter("Param1071", 0f); // 外围星变大
-        SetParameter("Param1081", 0f); // 外星出现
-        SetParameter("Param411", 0f); // 中蒙版(星辉)
-        SetParameter("Param891", 0f); // 内蒙版(星辉)
-        SetParameter("Param431", 0f); // 外紫环显隐
-        SetParameter("Param911", 0f); // 中紫环显隐
-        SetParameter("Param741", 0f); // 内紫环显隐
-        SetParameter("Param441", 0f); // 外紫环大小
-        SetParameter("Param961", 0f); // 中紫环大小
-        SetParameter("Param731", 0f); // 内紫环大小
-        SetParameter("Param421", 0f); // 外紫环转(Group20)
-        SetParameter("Param422", 0f); // 外紫环转(Group21)
-        SetParameter("Param901", 0f); // 中紫环转(Group20)
-        SetParameter("Param902", 0f); // 中紫环转(Group21)
-        SetParameter("Param881", 0f); // 内紫环转(Group20)
-        SetParameter("Param882", 0f); // 内紫环转(Group21)
         SetParameter("Param94", 0f);  // 右手上臂旋转
         SetParameter("Param97", 0f);  // 右手 基础上臂旋转
         SetParameter("Param95", 0f);  // 右手 基础 上壁透视
@@ -1518,15 +1404,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("Param105", 0f);
         SetParameter("Param106", 0f);
         SetParameter("Param107", 0f);
-        // 法阵参数
-        SetParameter("Param121", 0f); // 黑幕切换
-        SetParameter("Param137", 0f); // 黑幕透明显现
-        SetParameter("Param154", 0f); // 七星盘透明
-        SetParameter("Param133", 0f); // 白圈大小
-        SetParameter("Param136", 0f); // 白圈不透明度
-        SetParameter("Param134", 0f); // 白圈位移X
-        SetParameter("Param135", 0f); // 白圈位移Y
-        SetParameter("Param132", 0f); // 眼镜发光
+        // 法阵参数（已移除黑幕/白圈/发光等视觉特效参数）
         SetParameter("Param155", 0f); // 镜头X
         SetParameter("Param156", 0f); // 镜头Y
         SetParameter("Param157", 0f); // 人物缩小放大

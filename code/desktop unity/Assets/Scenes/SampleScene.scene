@@ -307,7 +307,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c284ffd81b2f413496a0793065c9aa08, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  modelPrefab: {fileID: 0}
+  modelPrefab: {fileID: 4937681999931895933, guid: 5700a3b6b0fb41888d248c7e42e07d21, type: 3}
   modelScale: 1
   verticalOffset: 128
 --- !u!114 &1054705964

@@ -64,7 +64,7 @@
 \begin{abstract}
 本文档为桌面宠物项目的完整技术文档。项目基于 Unity 2022.3 LTS 引擎，
 使用 Live2D Cubism SDK 5-r.4 渲染《崩坏：星穹铁道》角色「符玄」，
-通过 Win32 透明窗口叠加技术实现桌面宠物效果。
+通过 DWM 玻璃层透明窗口 (DwmExtendFrameIntoClientArea) 实现桌面宠物效果。
 文档涵盖系统架构、各模块设计、动画系统、状态机及交互机制。
 \end{abstract}
 
@@ -86,8 +86,8 @@
 \begin{itemize}
     \item \textbf{引擎}：Unity 2022.3.62t7 (LTS)
     \item \textbf{角色渲染}：Live2D Cubism SDK 5-r.4（参数化变形 + 实时物理模拟）
-    \item \textbf{窗口管理}：Win32 API（user32.dll）--- 色键透明、置顶、点击穿透
-    \item \textbf{交互方式}：左键拖拽/抛掷、右键上下文菜单
+    \item \textbf{窗口管理}：Win32 API（user32.dll + Dwmapi.dll）--- DWM 玻璃层透明、置顶、点击穿透
+    \item \textbf{交互方式}：左键拖拽/抛掷、右键上下文菜单、底部 AI 聊天输入栏
     \item \textbf{语言}：C\# 脚本
     \item \textbf{平台}：Windows 10/11（Win64）
 \end{itemize}
@@ -97,7 +97,7 @@
 功能已完成：
 \begin{itemize}
     \item Live2D 模型加载与渲染（自动 AssetDatabase / Resources 双路径）
-    \item 桌面透明窗口（色键抠除 \#00FF00 + WS\_EX\_LAYERED）
+    \item 桌面透明窗口（DWM 玻璃层扩展 DwmExtendFrameIntoClientArea，黑色=透明）
     \item 鼠标穿透动态管理（WS\_EX\_TRANSPARENT）
     \item 像素物理引擎（重力、边界碰撞、抛掷）
     \item 地面任务状态机（5 种行为加权随机切换）
@@ -122,36 +122,44 @@
 
 \begin{lstlisting}[frame=single,numbers=none,style=csharp]
 +-----------------------------------------------------------------+
-|            Unity 窗口 (透明叠加层)                                |
+|            Unity 窗口 (DWM 玻璃层透明)                           |
 |  +-----------------------------------------------------------+  |
-|  |  Camera (Clear=SolidColor, BG=#00FF00)                     |  |
+|  |  Camera (Clear=SolidColor, BG=纯黑 0,0,0,0)                |  |
 |  |                                                              |  |
 |  |  DesktopPet (主控)                                          |  |
 |  |    +-- 像素物理 (重力/碰撞/落地)                             |  |
 |  |    +-- 地面任务状态机 (加权随机选择)                          |  |
 |  |                                                              |  |
 |  |  DragHandler (交互)                                         |  |
-|  |    +-- 左键拖拽窗口移动 + 抛掷                               |  |
+|  |    +-- 左键拖拽/抛掷                                        |  |
 |  |    +-- 右键菜单开关                                          |  |
 |  |    +-- 点击穿透管理 (每帧)                                   |  |
 |  |                                                              |  |
-|  |  Live2DRenderer (渲染)                                      |  |
+|  |  Live2DRenderer (渲染, order=801)                           |  |
 |  |    +-- CubismModel 参数驱动                                  |  |
-|  |    +-- 眨眼/呼吸/噪声微动                                    |  |
-|  |    +-- 空闲动作 1-10 循环                                    |  |
-|  |    +-- 走路动画 (转体/抬腿/颠簸)                            |  |
-|  |    +-- 体态淡入淡出 (0.3s/0.4s)                             |  |
+|  |    +-- 眨眼/呼吸/Perlin 噪声微动                             |  |
+|  |    +-- 空闲动作 1-11 循环                                    |  |
+|  |    +-- 走路动画 (转体/抬腿/颠簸/淡入淡出)                   |  |
 |  |    +-- 强制动作锁定 (actionLocked)                           |  |
+|  |    +-- 拖拽挣扎 (双臂划水+双腿交替+速度驱动物理)             |  |
+|  |    +-- 时间/天气表情联动                                     |  |
 |  |                                                              |  |
 |  |  ContextMenu (UI)                                           |  |
-|  |    +-- 权重调整 (5 种任务权重)                              |  |
-|  |    +-- 强制动作触发按钮 (10 个动作)                          |  |
-|  |    +-- OnGUI 直接绘制 (无 Canvas)                            |  |
+|  |    +-- 设置/动作/聊天 3 标签                                 |  |
+|  |    +-- 权重调整 + 强制动作按钮                              |  |
+|  |    +-- 聊天标签: 仅输入框+发送按钮                           |  |
+|  |    +-- OnGUI 直接绘制                                       |  |
 |  |                                                              |  |
 |  |  WindowOverlay (Win32)                                      |  |
-|  |    +-- SetWindowLong (透明/穿透)                             |  |
-|  |    +-- SetLayeredWindowAttributes (色键)                     |  |
+|  |    +-- DwmExtendFrameIntoClientArea (玻璃层透明)             |  |
+|  |    +-- SetWindowLong (穿透/置顶)                             |  |
 |  |    +-- SetWindowPos (全屏置顶)                               |  |
+|  |                                                              |  |
+|  |  BottomInputBar (底部输入栏)                                 |  |
+|  |    +-- Windows 搜索风格 (白底+浅灰输入框+蓝按钮)             |  |
+|  |    +-- 固定坐标系统 (BAR_LEFT/RIGHT/TOP/BOTTOM)              |  |
+|  |    +-- 淡入动画 (0.5s)                                      |  |
+|  |    +-- Enter/按钮发送 + 排队中禁用                          |  |
 |  +-----------------------------------------------------------+  |
 +-----------------------------------------------------------------+
 \end{lstlisting}
@@ -173,14 +181,25 @@
 \section{窗口管理 (WindowOverlay)}
 % ═══════════════════════════════════════════
 
-\subsection{色键透明原理}
+\subsection{DWM 玻璃层透明原理}
+
+透明方案从色键（Color Key / LWA\_COLORKEY）改为 DWM 玻璃层扩展，
+彻底解决了半透明像素透绿的问题：
 
 \begin{enumerate}
-    \item Camera 设置 ClearFlags = SolidColor，Background = (0, 1, 0) 即 \#00FF00 亮绿色
-    \item 通过 Win32 API \texttt{SetWindowLong} 设置 \texttt{WS\_EX\_LAYERED} 扩展样式
-    \item \texttt{SetLayeredWindowAttributes} 将颜色键 0x0000FF00 设为透明
+    \item Camera 设置 ClearFlags = SolidColor，Background = (0, 0, 0, 0) 纯黑透明
+    \item 通过 Win32 API \texttt{DwmExtendFrameIntoClientArea} 将窗口客户区黑色像素设为透明
+    \item 设置 \texttt{MARGINS} 结构：\texttt{cxLeftWidth = -1} 表示全窗口玻璃层扩展
+    \item 需在 Project Settings 中关闭 DXGI flip model（Graphics API = D3D11）
     \item 构建版自动重试 5 次查找窗口句柄（延迟帧防竞态）
 \end{enumerate}
+
+\textbf{相比色键方案的优势}：
+\begin{itemize}
+    \item 色键（\#00FF00）只精确移除纯绿色，Live2D 模型半透明/抗锯齿像素与绿色混合后$\neq$\#00FF00 → 残留绿边
+    \item DWM 玻璃层让黑色（0,0,0）透明，Live2D 半透明像素是黑色系的，不会产生绿色伪影
+    \item 无需保持 \texttt{WS\_EX\_LAYERED}，窗口样式更简单
+\end{itemize}
 
 \subsection{点击穿透 (Click-Through)}
 
@@ -198,6 +217,49 @@
     \item 置顶（HWND\_TOPMOST）
     \item 不在任务栏显示（WS\_EX\_TOOLWINDOW）
     \item 工具窗口风格
+\end{itemize}
+
+% ═══════════════════════════════════════════
+\section{底部输入栏 (BottomInputBar)}
+% ═══════════════════════════════════════════
+
+\subsection{概述}
+
+\texttt{BottomInputBar} 是底部 AI 聊天输入栏，设计为 Windows 搜索风格：
+白色圆角背景、浅灰输入框、蓝色发送按钮。使用固定坐标系统
+（BAR\_LEFT/RIGHT/TOP/BOTTOM）精确定位。
+
+\subsection{坐标系统}
+
+使用四个常量定义位置，可在脚本顶部直接修改：
+
+\begin{lstlisting}[style=csharp,caption={BottomInputBar 坐标常量},label={lst:bar-coords}]
+private const float BAR_LEFT   = 265f;
+private const float BAR_RIGHT  = 635f;
+private const float BAR_TOP    = 1528f;
+private const float BAR_BOTTOM = 1602f;
+\end{lstlisting}
+
+四个属性（BarLeft/Right/Top/Bottom）公开供 \texttt{DragHandler}
+等外部组件使用。
+
+\subsection{UI 设计}
+
+\begin{itemize}
+    \item \textbf{背景}：白色半透明矩形（RGBA: 1,1,1,0.92），顶部浅灰阴影线
+    \item \textbf{输入框}：浅灰背景（0.85,0.85,0.88,0.6），深色文字，14px 字号
+    \item \textbf{发送按钮}：蓝色（0.2,0.5,0.95），悬停加深，12px 字号
+    \item \textbf{输入框与按钮等高}，水平排列，间距 4px
+    \item \textbf{淡入动画}：打开后 0.5s 渐显（$\alpha$ 从 0 到 1）
+\end{itemize}
+
+\subsection{交互逻辑}
+
+\begin{itemize}
+    \item Enter 键发送（需输入框获得焦点且内容非空）
+    \item 按钮点击发送（聊天队列忙碌时按钮变灰并显示 📤 图标）
+    \item 发送后清空输入框、释放焦点
+    \item 鼠标悬停检测（IsMouseOverBar 属性）供 DragHandler 判断点击穿透
 \end{itemize}
 
 % ═══════════════════════════════════════════
@@ -369,13 +431,13 @@ StopTime      & 6   & 停止随机时长 (6-15s) \\
 \texttt{PickIdleBubbleMessage()} 50\% 概率触发时间/天气特化气泡：
 
 \begin{itemize}
-    \item 犯困时段：\"好晚了…该睡了~\"\"眼睛快睁不开了…\"
-    \item 夜晚：\"晚上好呀~\"\"月色真美…\"
-    \item 早晨（5-8点）：\"早安~\"\"今天也要加油哦！\"
-    \item 雨天：\"下雨了呢~\"\"听雨声发呆~\"
-    \item 雷雨：\"打雷了好可怕！\"\"轰隆隆…好吓人…\"
-    \item 雪：\"下雪了！好漂亮~\"\"想堆雪人…\"
-    \item 晴天：\"今天天气真好~\"\"太阳暖洋洋的~\"
+    \item 犯困时段："好晚了…该睡了~""眼睛快睁不开了…"
+    \item 夜晚："晚上好呀~""月色真美…"
+    \item 早晨（5-8点）："早安~""今天也要加油哦！"
+    \item 雨天："下雨了呢~""听雨声发呆~"
+    \item 雷雨："打雷了好可怕！""轰隆隆…好吓人…"
+    \item 雪："下雪了！好漂亮~""想堆雪人…"
+    \item 晴天："今天天气真好~""太阳暖洋洋的~"
 \end{itemize}
 
 % ═══════════════════════════════════════════
@@ -411,7 +473,7 @@ StopTime      & 6   & 停止随机时长 (6-15s) \\
 
 \subsection{空闲动作系统}
 
-共有 10 种空闲动作循环播放（1 $\to$ 2 $\to$ $\cdots$ $\to$ 10 $\to$ 1）：
+共有 11 种空闲动作循环播放（1 $\to$ 2 $\to$ $\cdots$ $\to$ 11 $\to$ 1）：
 
 \begin{table}[H]
 \centering
@@ -431,6 +493,7 @@ StopTime      & 6   & 停止随机时长 (6-15s) \\
 8 & 委屈 (Cry)     & 3.5 \\
 9 & 法阵 (MagicCircle) & 5.5 \\
 10 & 害羞 (Blush)  & 3.5 \\
+11 & 困惑 (Confused) & 3.5 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -448,16 +511,17 @@ StopTime      & 6   & 停止随机时长 (6-15s) \\
 \toprule
 \textbf{动作} & \textbf{权重} & \textbf{相对概率} \\
 \midrule
-歪头   & 5 & 17.9\% \\
-微笑   & 5 & 17.9\% \\
-挑眉   & 3 & 10.7\% \\
-星辉   & 2 & 7.1\% \\
-伸懒腰 & 2 & 7.1\% \\
-爱心   & 3 & 10.7\% \\
-数钱   & 2 & 7.1\% \\
-委屈   & 3 & 10.7\% \\
-法阵   & 1 & 3.6\% \\
-害羞   & 3 & 10.7\% \\
+歪头   & 5 & 16.1\% \\
+微笑   & 5 & 16.1\% \\
+挑眉   & 3 & 9.7\% \\
+星辉   & 2 & 6.5\% \\
+伸懒腰 & 2 & 6.5\% \\
+爱心   & 3 & 9.7\% \\
+数钱   & 2 & 6.5\% \\
+委屈   & 3 & 9.7\% \\
+法阵   & 1 & 3.2\% \\
+害羞   & 3 & 9.7\% \\
+困惑   & 2 & 6.5\% \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -616,11 +680,25 @@ Cubism SDK 通过 \texttt{CubismUpdateController} 统一调度所有 \texttt{ICu
 
 \subsection{功能区域}
 
+菜单分为三个标签页（Settings / Actions / Chat），通过 \texttt{GUI.Toolbar} 切换。
+
 \begin{enumerate}
-    \item \textbf{权重设置}：5 种地面任务的权重滑块（0-10），应用按钮即时生效
-    \item \textbf{强制动作}：10 个动作按钮，点击后强制播放对应动作
-    \item \textbf{关闭按钮}：恢复宠物运动 + 清理回调
+    \item \textbf{设置 (Settings)}：5 种地面任务的权重滑块（0-10），应用按钮即时生效
+    \item \textbf{动作 (Actions)}：11 个动作按钮，点击后强制播放对应动作
+    \item \textbf{聊天 (Chat)}：简化界面 — 仅底部输入框 + 发送按钮，无消息历史/状态栏/工具栏
 \end{enumerate}
+
+\subsection{聊天标签设计}
+
+聊天标签（DrawChatTab）已大幅简化：
+
+\begin{itemize}
+    \item 使用 \texttt{GUILayout.FlexibleSpace()} + \texttt{GUILayout.BeginVertical(MinHeight)} 
+          将输入区域推至标签底部
+    \item 移除了消息历史区域、错误/状态提示、工具栏
+    \item 输入框 + 发送按钮与 \texttt{BottomInputBar} 同时可用
+    \item 发送逻辑：调用 \texttt{ChatManager.SendChatMessage()}，队列忙时按钮禁用
+\end{itemize}
 
 \subsection{动作执行流程}
 
@@ -696,14 +774,10 @@ public interface IPetRenderer
     \item 2s 完成
 \end{itemize}
 
-\subsubsection{动作 4 --- 星辉环绕}
-复杂多参数协同动画：
-\begin{itemize}
-    \item 三环（内/中/外紫环）不同的旋转速度，缓入缓出
-    \item 黑幕背景（Param121 + Param137）+ 眼镜发光（Param132）
-    \item 星星闪烁 + 外围星脉动
-    \item 6s 完成
-\end{itemize}
+\subsubsection{动作 4 --- 星辉环绕（已移除视觉特效）}
+已移除所有视觉特效参数（紫环旋转、黑幕、眼镜发光、星星闪烁），
+仅保留动作时长（6s）和空壳函数。
+过渡到 DWM 透明方案后，半透明特效像素与黑色背景不兼容。
 
 \subsubsection{动作 5 --- 伸懒腰}
 \begin{itemize}
@@ -735,15 +809,10 @@ public interface IPetRenderer
     \item 3.5s 完成
 \end{itemize}
 
-\subsubsection{动作 9 --- 法阵显现}
-最复杂的多阶段动画（4 个 Phase）：
-\begin{itemize}
-    \item Phase 1 (0-35\%)：黑幕开启 + 七星盘浮现
-    \item Phase 2 (20-50\%)：白圈展开 + 呼吸位移
-    \item Phase 3 (35-65\%)：眼镜发光 + 镜头微动 + 人物缩小
-    \item Phase 4 (75-100\%)：各项参数二次缓出消退
-    \item 5.5s 完成
-\end{itemize}
+\subsubsection{动作 9 --- 法阵显现（已移除视觉特效）}
+已移除所有视觉特效参数（黑幕、白圈、七星盘、眼镜发光、镜头缩放），
+仅保留五阶段手势变化：举过头顶 → 剑指成型 → 指尖凝光 → 扩散 → 消散。
+身体姿态和剑指手势仍保留，视觉光圈参数全部移除。
 
 \subsubsection{动作 10 --- 害羞}
 \begin{itemize}
@@ -832,21 +901,23 @@ Desktop_per_pro/
 
 \begin{itemize}
     \item \textbf{模型大小/位置}：修改 Live2DRenderer.cs 顶部的
-        \texttt{LIVE2D\_SCALE}（默认 200）和 \texttt{LIVE2D\_OFFSET\_Y}（默认 100）
+        \texttt{LIVE2D\_SCALE}（默认 56.25）和 \texttt{LIVE2D\_OFFSET\_Y}（默认 0）
     \item \textbf{动作时长}：各动作对应的 \texttt{*\_DURATION} 常量
     \item \textbf{权重调整}：通过右键菜单 UI 实时调整
     \item \textbf{过渡平滑度}：\texttt{WALK\_FADE\_IN\_DURATION}（0.3s）、
         \texttt{IDLE\_BLEND\_DURATION}（0.4s）
     \item \textbf{物理}：DesktopPet.cs 顶部的重力/速度常量
+    \item \textbf{输入栏位置}：BottomInputBar.cs 顶部的 \texttt{BAR\_LEFT/RIGHT/TOP/BOTTOM} 常量
 \end{itemize}
 
 \subsection{构建注意}
 
 \begin{itemize}
-    \item Camera Background 必须为 \#00FF00（色键透明色）
+    \item Camera Background 必须为纯黑 (0,0,0,0)（DWM 玻璃层透明用）
     \item 构建版自动应用透明窗口设置（编辑器版不执行）
     \item Live2D 模型需通过 Cubism SDK 导入生成 Prefab
     \item 单例互斥锁防止 Build \& Run 产生多个实例
+    \item 必须在 Project Settings 中：Graphics API = D3D11，取消勾选 DXGI flip model
 \end{itemize}
 
 % ═══════════════════════════════════════════
@@ -879,6 +950,16 @@ Desktop_per_pro/
            &      & 新增第 11 个空闲动作「困惑」\\
            &      & 待机气泡支持时间/天气特化内容\\
            &      & 更新项目文档 README + LaTeX\\
+2026-06-18 & v0.9 & 窗口透明从色键（\#00FF00）切换为 DWM 玻璃层透明（DwmExtendFrameIntoClientArea）\\
+           &      & 移除 Live2D 星辉/法阵/数钱全部视觉特效参数（Param121/132/137 等）\\
+           &      & 简化聊天 UI：移除消息历史/状态栏/工具栏，仅保留输入框+发送按钮\\
+           &      & 底部输入栏（BottomInputBar）改为 Windows 搜索风格 + 固定坐标系统\\
+           &      & 输入栏坐标可调（BAR\_LEFT/RIGHT/TOP/BOTTOM 常量）\\
+           &      & 输入框放大 + 淡入动画\\
+           &      & Camera 背景统一改为纯黑 (0,0,0,0)\\
+           &      & Model3DRenderer 背景同样改为黑色\\
+           &      & 重建 BuildScript.cs（自动构建脚本）\\
+           &      & 更新 LaTeX 技术文档至 v0.9\\
 \bottomrule
 \end{tabular}
 \end{table}

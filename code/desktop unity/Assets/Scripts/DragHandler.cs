@@ -313,8 +313,10 @@ public class DragHandler : MonoBehaviour
         bool overPet = IsPointInPet(mousePos);
         // ★ 底部输入栏也接收点击（打字用）
         bool overBar = _bottomBar != null
-            && mousePos.y >= _bottomBar.BarTopY
-            && mousePos.y <= _bottomBar.BarBottomY;
+            && mousePos.x >= _bottomBar.BarLeft
+            && mousePos.x <= _bottomBar.BarRight
+            && mousePos.y >= _bottomBar.BarTop
+            && mousePos.y <= _bottomBar.BarBottom;
 
         bool needInput = overPet || overBar;
 

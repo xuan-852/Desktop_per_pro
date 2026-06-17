@@ -7,13 +7,17 @@ using UnityEngine;
 /// <summary>
 /// 桌面宠物 — 窗口透明化与置顶管理
 ///
-/// 使用色键透明 (Color Key) 将 Unity 窗口中的亮绿色 (#00FF00) 抠除，
+/// 使用 DWM 玻璃层扩展 (DwmExtendFrameIntoClientArea) 使黑色像素透明，
 /// 实现透明窗口效果，支持置顶、无边框、点击穿透。
+///
+/// 相比色键抠图 (Color Key) 方案，此方案不会产生绿色残留问题，
+/// 因为 Live2D 模型的半透明/抗锯齿像素是黑色系的，不会混入绿色。
 ///
 /// 用法：
 /// 1. 挂到任意 GameObject
-/// 2. Main Camera 的 Background 设为 #00FF00 (R=0,G=255,B=0)
+/// 2. Main Camera 的 Background 设为纯黑 (R=0,G=0,B=0)
 /// 3. 构建运行
+/// 4. 需在 Project Settings 中：Graphics API = D3D11，取消勾选 DXGI flip model
 /// </summary>
 public class WindowOverlay : MonoBehaviour
 {
@@ -33,8 +37,6 @@ public class WindowOverlay : MonoBehaviour
     private const uint WS_EX_TRANSPARENT = 0x00000020;
     private const uint WS_EX_APPWINDOW = 0x00040000;
 
-    private const uint LWA_COLORKEY = 0x00000001;
-
     private const int GWL_STYLE = -16;
     private const int GWL_EXSTYLE = -20;
 
@@ -51,7 +53,14 @@ public class WindowOverlay : MonoBehaviour
     private const uint SWP_FRAMECHANGED = 0x0020;
     private const uint SWP_NOZORDER = 0x0004;
 
-    private const uint WM_NCCALCSIZE = 0x0083;
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MARGINS
+    {
+        public int cxLeftWidth;
+        public int cxRightWidth;
+        public int cyTopHeight;
+        public int cyBottomHeight;
+    }
 
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
     private static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
@@ -65,10 +74,6 @@ public class WindowOverlay : MonoBehaviour
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
         int X, int Y, int cx, int cy, uint uFlags);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern bool SetLayeredWindowAttributes(IntPtr hwnd,
-        uint crKey, byte bAlpha, uint dwFlags);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
@@ -96,6 +101,9 @@ public class WindowOverlay : MonoBehaviour
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern int GetSystemMetrics(int nIndex);
+
+    [DllImport("Dwmapi.dll", SetLastError = true)]
+    private static extern uint DwmExtendFrameIntoClientArea(IntPtr hWnd, ref MARGINS margins);
 
     private const int SM_CXSCREEN = 0;
     private const int SM_CYSCREEN = 1;
@@ -150,15 +158,11 @@ public class WindowOverlay : MonoBehaviour
         if (cam != null)
         {
             cam.clearFlags = CameraClearFlags.SolidColor;
-            cam.backgroundColor = new Color(0f, 1f, 0f, 1f);
+            cam.backgroundColor = new Color(0f, 0f, 0f, 0f); // 纯黑透明背景
             cam.allowHDR = false;
             cam.allowMSAA = false;
-            Log("已强制相机背景为绿色+关HDR");
+            Log("已强制相机背景为纯黑+关HDR");
         }
-
-        // 关掉任何可能改变颜色的后处理
-        var fx = FindObjectOfType<MonoBehaviour>();
-        // 不遍历，太暴力了，信任 ProjectSettings
     }
 
     private System.Collections.IEnumerator RetryApply()
@@ -291,26 +295,21 @@ public class WindowOverlay : MonoBehaviour
         // ---- 步骤4: 重新显示窗口，确保新样式生效 ----
         ShowWindow(_hwnd, SW_SHOWNA);
 
-        // ---- 步骤5: 色键透明（要额外调用两次确保生效） ----
-        bool keyResult = SetLayeredWindowAttributes(_hwnd, 0x0000FF00, 0, LWA_COLORKEY);
-        if (!keyResult)
+        // ---- 步骤5: DWM 玻璃层扩展（黑色=透明） ----
+        // 关键：将整个客户区扩展为 DWM 玻璃区域，使纯黑 (0,0,0) 变透明
+        MARGINS margins = new MARGINS { cxLeftWidth = -1, cxRightWidth = 0, cyTopHeight = 0, cyBottomHeight = 0 };
+        uint dwmResult = DwmExtendFrameIntoClientArea(_hwnd, ref margins);
+        if (dwmResult != 0)
         {
-            int err = Marshal.GetLastWin32Error();
-            LogError($"色键透明第一次失败, error={err}");
-        }
-
-        // 第二次：有些窗口需要重新 SetWindowPos 后再设一次
-        SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, w, h, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-        keyResult = SetLayeredWindowAttributes(_hwnd, 0x0000FF00, 0, LWA_COLORKEY);
-        if (!keyResult)
-        {
-            int err = Marshal.GetLastWin32Error();
-            LogError($"色键透明第二次失败, error={err}");
+            LogError($"DwmExtendFrameIntoClientArea 失败, error={dwmResult}");
         }
         else
         {
-            Log("已应用色键透明 (0x0000FF00)");
+            Log("已应用 DWM 玻璃层透明（黑色=透明）");
         }
+
+        // 刷新窗口使 DWM 生效
+        SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, w, h, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 
         _applied = true;
         Log($"✅ 透明窗口已就绪: {w}x{h}, 句柄={_hwnd.ToInt64():X8}, 标题='{title}'");

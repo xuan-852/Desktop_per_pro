@@ -1,4 +1,5 @@
 using System.Threading;
+using System.Runtime.InteropServices;
 using UnityEngine;
 
 /// <summary>
@@ -21,8 +22,13 @@ public class DesktopPet : MonoBehaviour
     private static Mutex _instanceMutex = null;
     private const string MutexName = "DesktopPet_Unity_SingleInstance";
 
+    // Win32 API
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+    private const int VK_ESCAPE = 0x1B;
+
     // ================ 可调参数（改这里）================
-    const int GROUND_Y_MARGIN     = -300;    // 地面距屏幕底部距离（像素），负数=往下调，正数=往上调
+    const int GROUND_Y_MARGIN     = 0;       // 地面距屏幕底部距离（像素），负数=往下调，正数=往上调
     const float WALK_SPEED_FACTOR = 0.5f;    // 移动速度系数（1=正常，0.5=一半）
     // ==================================================
 
@@ -257,6 +263,17 @@ public class DesktopPet : MonoBehaviour
 
     private void Update()
     {
+        // ★ ESC 退出（用 GetAsyncKeyState 无窗口焦点也可检测）
+#if !UNITY_EDITOR
+        bool escDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+        if (escDown)
+        {
+            Debug.Log("[DesktopPet] ESC 按下，退出程序");
+            Application.Quit();
+            return;
+        }
+#endif
+
         // 暂停时不更新物理
         if (isPaused)
             return;
