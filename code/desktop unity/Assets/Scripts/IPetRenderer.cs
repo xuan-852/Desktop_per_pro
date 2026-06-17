@@ -7,7 +7,8 @@ public interface IPetRenderer
     void ShowDragPose();
 
     /// <summary>切换到点击姿势</summary>
-    void ShowClickPose();
+    /// <param name="hitNormY">点击位置归一化 Y（0=头顶，1=脚底）</param>
+    void ShowClickPose(float hitNormY);
 
     /// <summary>切换到落地姿势</summary>
     void ShowLandPose();

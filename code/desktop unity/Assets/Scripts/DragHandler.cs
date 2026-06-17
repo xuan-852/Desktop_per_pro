@@ -232,9 +232,12 @@ public class DragHandler : MonoBehaviour
             }
             else if (_isClickCandidate)
             {
-                if (_renderer != null) _renderer.ShowClickPose();
+                // 计算点击位置在宠物身上的归一化 Y（0=头顶，1=脚底）
+                Vector2 clickPos = _dragStartMouse;
+                float hitNormY = Mathf.Clamp01((clickPos.y - _pet.petY) / _pet.petHeight);
+                if (_renderer != null) _renderer.ShowClickPose(hitNormY);
                 _pet.Pause(clickPauseDuration);
-                Debug.Log("[DragHandler] 轻击宠物");
+                Debug.Log($"[DragHandler] 轻击宠物 hitNormY={hitNormY:F2}");
                 OnPetClicked?.Invoke();
             }
 

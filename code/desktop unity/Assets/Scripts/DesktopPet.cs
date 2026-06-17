@@ -222,6 +222,13 @@ public class DesktopPet : MonoBehaviour
             Debug.Log("[DesktopPet] 自动添加了 BottomInputBar 组件");
         }
 
+        // 自动确保 TimeWeatherController 存在
+        if (GetComponent<TimeWeatherController>() == null)
+        {
+            gameObject.AddComponent<TimeWeatherController>();
+            Debug.Log("[DesktopPet] 自动添加了 TimeWeatherController 组件");
+        }
+
         // 获取渲染器引用：优先使用 HybridRenderer
         var hybrid = GetComponent<HybridRenderer>();
         if (hybrid != null)

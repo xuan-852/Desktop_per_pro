@@ -126,6 +126,18 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     const float CLICK_EYE_OPEN     = 0.3f;   // 点击眯眼
     const float CLICK_LOCK_TIME    = 1.0f;   // 点击姿势锁定秒数
 
+    // -- 点击区域（按 hitNormY 区分：0=头顶，1=脚底）--
+    // 头部区 (0~0.35): 摸头 — 眯眼歪头
+    // 身体区 (0.35~0.65): 戳身体 — 睁大眼张嘴惊讶
+    const float POKE_EYE_OPEN      = 1.3f;   // 戳身体眼睛睁大
+    const float POKE_MOUTH_OPEN    = 0.8f;   // 戳身体张嘴惊讶
+    const float POKE_MOUTH_FORM    = 0.5f;   // 戳嘴巴型
+    const float POKE_BROW_RAISE    = 10f;    // 戳眉毛抬起
+    // 腿部区 (0.65~1.0): 碰腿 — 害羞开心（复用 BLUSH 参数）
+    const float LEG_HIT_ANGLE_Z    = -6f;    // 碰腿歪头
+    const float LEG_HIT_SMILE      = 0.6f;   // 碰腿微笑
+    const float LEG_HIT_EYE_CLOSE  = 0.3f;   // 碰腿眯眼
+
     // -- 屏幕边缘碰撞反弹 --
     const float WALL_HIT_DURATION    = 0.5f;  // 反弹动画持续秒数
 
@@ -232,10 +244,13 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     private DesktopPet _pet;
     private DragHandler _dragHandler;
     private ChatBubble _chatBubble;
+    private TimeWeatherController _timeController;
 
     // 姿势锁定
     private bool _poseLocked = false;
     private float _poseLockUntil = 0f;
+    // 点击姿势保存的参数（物理 order 800 会覆盖，LateUpdate 重新设）
+    private readonly Dictionary<string, float> _clickSavedParams = new Dictionary<string, float>();
 
     // 眨眼
     private float _blinkTime = 0f;
@@ -316,7 +331,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         _dragHandler = GetComponent<DragHandler>();
         _chatBubble = GetComponent<ChatBubble>();
         if (_chatBubble == null) _chatBubble = FindObjectOfType<ChatBubble>();
-        Debug.Log($"[Live2DRenderer] DesktopPet={(_pet != null)}, DragHandler={(_dragHandler != null)}, ChatBubble={(_chatBubble != null)}");
+        _timeController = GetComponent<TimeWeatherController>();
+        if (_timeController == null) _timeController = FindObjectOfType<TimeWeatherController>();
+        Debug.Log($"[Live2DRenderer] DesktopPet={(_pet != null)}, DragHandler={(_dragHandler != null)}, ChatBubble={(_chatBubble != null)}, TimeWeatherController={(_timeController != null)}");
 
         // ★ 强制从宏读取（忽略场景中序列化的旧值，改宏立即生效）
         modelScale = LIVE2D_SCALE;
@@ -507,6 +524,15 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         {
             // 平滑转身（_dragSmoothBodyY 在 UpdateDragStruggle 中更新）
             UpdateDragStruggle();
+            if (_cubismModel != null) _cubismModel.ForceUpdateNow();
+            return;
+        }
+
+        // ★ 点击/摸头锁定中 → 重新设置被物理覆盖的参数
+        if (_poseLocked && Time.time < _poseLockUntil)
+        {
+            foreach (var kv in _clickSavedParams)
+                SetParameter(kv.Key, kv.Value);
             if (_cubismModel != null) _cubismModel.ForceUpdateNow();
             return;
         }
@@ -709,7 +735,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
                 {
                     if (!_chatBubble.IsShowing)
                     {
-                        string msg = IDLE_BUBBLES[Random.Range(0, IDLE_BUBBLES.Length)];
+                        string msg = PickIdleBubbleMessage();
                         _chatBubble.ShowMessage(msg, 4f);
                     }
                     _idleBubbleTimer = 0f;
@@ -722,6 +748,96 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             _idleBubbleTimer = 0f;
         }
     }
+
+    /// <summary>
+    /// 选取待机气泡消息（50% 概率随机池，50% 概率天气/时间特化）
+    /// </summary>
+    private string PickIdleBubbleMessage()
+    {
+        bool useTimeWeather = (_timeController != null) && (Random.value < 0.5f);
+        if (useTimeWeather)
+        {
+            // 时间特化
+            if (_timeController.isSleepyTime)
+                return SLEEPY_BUBBLES[Random.Range(0, SLEEPY_BUBBLES.Length)];
+            else if (_timeController.isNight)
+                return NIGHT_BUBBLES[Random.Range(0, NIGHT_BUBBLES.Length)];
+            else if (_timeController.hour >= 5 && _timeController.hour < 8)
+                return MORNING_BUBBLES[Random.Range(0, MORNING_BUBBLES.Length)];
+
+            // 天气特化
+            if (_timeController.weatherFetched)
+            {
+                var wt = _timeController.weather;
+                string tempLabel = _timeController.temperatureC < 5f ? "好冷" :
+                                   _timeController.temperatureC > 30f ? "好热" : null;
+                if (wt == TimeWeatherController.WeatherType.Rain ||
+                    wt == TimeWeatherController.WeatherType.Drizzle)
+                {
+                    string[] rainMsgs = tempLabel != null
+                        ? new string[] { $"下雨了{tempLabel}…", "听雨声发呆~", "淅淅沥沥…" }
+                        : new string[] { "下雨了呢~", "听雨声发呆~", "淅淅沥沥…" };
+                    return rainMsgs[Random.Range(0, rainMsgs.Length)];
+                }
+                if (wt == TimeWeatherController.WeatherType.Thunder)
+                    return THUNDER_BUBBLES[Random.Range(0, THUNDER_BUBBLES.Length)];
+                if (wt == TimeWeatherController.WeatherType.Snow)
+                    return SNOW_BUBBLES[Random.Range(0, SNOW_BUBBLES.Length)];
+                if (wt == TimeWeatherController.WeatherType.Clear)
+                    return SUNNY_BUBBLES[Random.Range(0, SUNNY_BUBBLES.Length)];
+                if (tempLabel != null)
+                    return $"今天{tempLabel}呀…";
+            }
+        }
+        return IDLE_BUBBLES[Random.Range(0, IDLE_BUBBLES.Length)];
+    }
+
+    private static readonly string[] SLEEPY_BUBBLES = new string[]
+    {
+        "好晚了…该睡了~",
+        "哈欠~~困了…",
+        "眼睛快睁不开了…",
+        "想躺床上…",
+        "再玩一会就睡…Zzz",
+    };
+
+    private static readonly string[] NIGHT_BUBBLES = new string[]
+    {
+        "晚上好呀~",
+        "月色真美…",
+        "一个人在晚上有点寂寞呢~",
+        "还在熬夜吗？",
+    };
+
+    private static readonly string[] MORNING_BUBBLES = new string[]
+    {
+        "早安~",
+        "早呀！又是新的一天~",
+        "哈欠…早上好…",
+        "今天也要加油哦！",
+    };
+
+    private static readonly string[] THUNDER_BUBBLES = new string[]
+    {
+        "打雷了好可怕！",
+        "轰隆隆…好吓人…",
+        "雷雨天气要注意安全~",
+    };
+
+    private static readonly string[] SNOW_BUBBLES = new string[]
+    {
+        "下雪了！好漂亮~",
+        "雪白白的好美~",
+        "想堆雪人…",
+    };
+
+    private static readonly string[] SUNNY_BUBBLES = new string[]
+    {
+        "今天天气真好~",
+        "太阳暖洋洋的~",
+        "好天气让人心情好~",
+        "想出去晒太阳~",
+    };
 
     /// <summary>
     /// 核心空闲动画 — 使用 Perlin 噪声实现自然微动
@@ -753,6 +869,48 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         float eyeY = (Mathf.PerlinNoise(_noiseTimeY, 7f) - 0.5f) * EYE_Y;
         SetParameter("ParamEyeBallX", eyeX);
         SetParameter("ParamEyeBallY", eyeY);
+
+        // === 昼夜/天气基调表情 ===
+        if (_timeController != null)
+        {
+            float nightDroop = 0f;
+            if (_timeController.isSleepyTime) nightDroop = 0.15f;       // 22~5点：眼皮微垂
+            else if (_timeController.isNight) nightDroop = 0.07f;       // 18~22点：轻微
+            if (nightDroop > 0f && !_isBlinking)
+            {
+                SetParameter("ParamEyeLOpen", Mathf.Lerp(1f, 0.7f, nightDroop));
+                SetParameter("ParamEyeROpen", Mathf.Lerp(1f, 0.7f, nightDroop));
+            }
+
+            // 天气基调
+            if (_timeController.weatherFetched)
+            {
+                var wt = _timeController.weather;
+                if (wt == TimeWeatherController.WeatherType.Rain ||
+                    wt == TimeWeatherController.WeatherType.Drizzle ||
+                    wt == TimeWeatherController.WeatherType.Thunder ||
+                    wt == TimeWeatherController.WeatherType.Overcast)
+                {
+                    // 阴雨 → 轻度委屈：眉毛微抬 + 嘴巴微嘟
+                    SetParameter("ParamBrowRY", Mathf.Lerp(0f, 4f, 0.3f));
+                    SetParameter("ParamBrowLY", Mathf.Lerp(0f, 4f, 0.3f));
+                    SetParameter("ParamMouthForm", Mathf.Lerp(0f, 0.2f, 0.3f));
+                }
+                else if (wt == TimeWeatherController.WeatherType.Clear ||
+                         wt == TimeWeatherController.WeatherType.Cloudy)
+                {
+                    // 晴/多云 → 自然微笑
+                    SetParameter("ParamMouthForm", Mathf.Lerp(0f, 0.2f, 0.2f));
+                }
+                else if (wt == TimeWeatherController.WeatherType.Snow)
+                {
+                    // 下雪 → 微微张嘴（好奇）
+                    SetParameter("ParamMouthOpenY", Mathf.Lerp(0f, 0.4f, 0.2f));
+                    SetParameter("ParamEyeLOpen", Mathf.Lerp(1f, 1.2f, 0.15f));
+                    SetParameter("ParamEyeROpen", Mathf.Lerp(1f, 1.2f, 0.15f));
+                }
+            }
+        }
 
         // === 空闲动作：加权随机选取（权重越高越容易出现）===
         // 动作: 1=歪头, 2=微笑, 3=挑眉, 4=星辉, 5=伸懒腰, 6=爱心眼, 7=数钱, 8=委屈, 9=法阵, 10=害羞
@@ -1418,19 +1576,63 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     }
 
     /// <summary>
-    /// 按权重随机选取一个空闲动作（1-10）
+    /// 按权重随机选取一个空闲动作（1-11），受时间/天气调节
     /// </summary>
     private int PickWeightedIdleAction()
     {
+        // 从基值复制，然后根据昼夜/天气调节
+        int[] w = new int[_idleActionWeights.Length];
+        for (int i = 0; i < w.Length; i++) w[i] = _idleActionWeights[i];
+
+        // ★ 夜间/犯困时段 → 活跃动作减少，犯困/委屈增加
+        bool isNight = (_timeController != null && _timeController.isNight);
+        bool isSleepy = (_timeController != null && _timeController.isSleepyTime);
+        if (isNight)
+        {
+            w[3] = Mathf.Max(1, w[3] - 1);  // 动作4 星辉
+            w[5] = Mathf.Max(1, w[5] - 1);  // 动作6 爱心眼
+            w[7] = w[7] + 1;                // 动作8 委屈/困
+        }
+        if (isSleepy)
+        {
+            w[7] = w[7] + 2;                // 动作8 更想睡
+            w[0] = w[0] + 1;                // 动作1 歪头（没精神歪着）
+        }
+
+        // ★ 天气调节
+        if (_timeController != null && _timeController.weatherFetched)
+        {
+            var wt = _timeController.weather;
+            if (wt == TimeWeatherController.WeatherType.Rain ||
+                wt == TimeWeatherController.WeatherType.Drizzle ||
+                wt == TimeWeatherController.WeatherType.Thunder)
+            {
+                w[7] = w[7] + 2;            // 动作8 委屈（下雨天不开心）
+                w[5] = Mathf.Max(1, w[5] - 1); // 动作6 爱心眼减少
+                w[6] = Mathf.Max(1, w[6] - 1); // 动作7 数钱减少
+            }
+            else if (wt == TimeWeatherController.WeatherType.Clear ||
+                     wt == TimeWeatherController.WeatherType.Cloudy)
+            {
+                w[5] = w[5] + 1;            // 动作6 爱心眼（晴天开心）
+                w[3] = w[3] + 1;            // 动作4 星辉
+            }
+            else if (wt == TimeWeatherController.WeatherType.Snow)
+            {
+                w[2] = w[2] + 1;            // 动作3 挑眉（好奇看雪）
+                w[7] = w[7] + 1;            // 动作8 委屈（冷）
+            }
+        }
+
         int totalWeight = 0;
-        for (int i = 0; i < _idleActionWeights.Length; i++)
-            totalWeight += _idleActionWeights[i];
+        for (int i = 0; i < w.Length; i++)
+            totalWeight += w[i];
 
         int roll = Random.Range(0, totalWeight);
         int cumulative = 0;
-        for (int i = 0; i < _idleActionWeights.Length; i++)
+        for (int i = 0; i < w.Length; i++)
         {
-            cumulative += _idleActionWeights[i];
+            cumulative += w[i];
             if (roll < cumulative)
                 return i + 1; // 动作编号从 1 开始
         }
@@ -1605,12 +1807,45 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         _dragInited = true;
     }
 
-    public void ShowClickPose()
+    public void ShowClickPose(float hitNormY)
     {
-        SetParameter("ParamEyeLOpen", CLICK_EYE_OPEN);
-        SetParameter("ParamEyeROpen", CLICK_EYE_OPEN);
-        SetParameter("ParamAngleX", CLICK_HEAD_ANGLE_X);
-        SetParameter("ParamBodyAngleX", CLICK_BODY_ANGLE_X);
+        _clickSavedParams.Clear();
+
+        if (hitNormY <= 0.35f)
+        {
+            // === 头部 → 摸头：眯眼歪头 ===
+            _clickSavedParams["ParamEyeLOpen"] = CLICK_EYE_OPEN;
+            _clickSavedParams["ParamEyeROpen"] = CLICK_EYE_OPEN;
+            _clickSavedParams["ParamAngleX"] = CLICK_HEAD_ANGLE_X;
+            _clickSavedParams["ParamBodyAngleX"] = CLICK_BODY_ANGLE_X;
+        }
+        else if (hitNormY <= 0.65f)
+        {
+            // === 身体 → 戳一下：睁大眼张嘴惊讶 ===
+            _clickSavedParams["ParamEyeLOpen"] = POKE_EYE_OPEN;
+            _clickSavedParams["ParamEyeROpen"] = POKE_EYE_OPEN;
+            _clickSavedParams["ParamMouthOpenY"] = POKE_MOUTH_OPEN;
+            _clickSavedParams["ParamMouthForm"] = POKE_MOUTH_FORM;
+            _clickSavedParams["ParamBrowLY"] = POKE_BROW_RAISE;
+            _clickSavedParams["ParamBrowRY"] = POKE_BROW_RAISE;
+            _clickSavedParams["ParamAngleX"] = CLICK_HEAD_ANGLE_X * 0.5f;
+        }
+        else
+        {
+            // === 腿/脚 → 碰腿：害羞开心 ===
+            _clickSavedParams["ParamEyeLOpen"] = LEG_HIT_EYE_CLOSE;
+            _clickSavedParams["ParamEyeROpen"] = LEG_HIT_EYE_CLOSE;
+            _clickSavedParams["ParamEyeLSmile"] = LEG_HIT_SMILE;
+            _clickSavedParams["ParamEyeRSmile"] = LEG_HIT_SMILE;
+            _clickSavedParams["ParamAngleZ"] = LEG_HIT_ANGLE_Z;
+            _clickSavedParams["ParamAngleX"] = CLICK_HEAD_ANGLE_X * 0.3f;
+            _clickSavedParams["ParamBodyAngleX"] = CLICK_BODY_ANGLE_X * 0.5f;
+        }
+
+        // 立即应用一次
+        foreach (var kv in _clickSavedParams)
+            SetParameter(kv.Key, kv.Value);
+
         _poseLocked = true;
         _poseLockUntil = Time.time + CLICK_LOCK_TIME;
     }
