@@ -102,9 +102,15 @@
     \item 像素物理引擎（重力、边界碰撞、抛掷）
     \item 地面任务状态机（5 种行为加权随机切换）
     \item 走路动画（侧身转体 + 腿臂交叉摆动 + 上下颠簸 + 体态淡入淡出）
-    \item 10 种空闲动作循环（歪头、微笑、挑眉、星辉、伸懒腰、爱心、数钱、委屈、法阵、害羞）
+    \item 11 种空闲动作循环（歪头、微笑、挑眉、星辉、伸懒腰、爱心、数钱、委屈、法阵、害羞、困惑）
     \item 右键上下文菜单（权重调整 + 强制动作播放）
     \item 强制动作锁定机制（播放期间不被走路覆盖，播完自动恢复）
+    \item 分区点击反馈（头部/身体/腿部 3 区不同反应）
+    \item 拖拽挣扎动画（双臂交替划水 + 双腿交替 + 身体扭动 + 表情）
+    \item 头发/裙子/法盘直接物理驱动（拖拽速度实时输入 CubismPhysics）
+    \item 时间/天气响应系统（昼夜犯困眼皮 + 天气表情基调 + 待机气泡）
+    \item AI 对话 + 自动闲聊 + 底部输入栏
+    \item 调试窗口实时调参
     \item 3D 模型渲染管线预留（HybridRenderer 双渲染器交叉淡入淡出）
 \end{itemize}
 
@@ -257,6 +263,119 @@ StopTime      & 6   & 停止随机时长 (6-15s) \\
     \item \texttt{ForceStop()}：将边缘任务转为定时任务，清零 petVx，启动停止任务
     \item \texttt{Resume()}：恢复时如果当前无任务或停止中，启动新任务
     \item \texttt{Pause(float)}：暂停指定秒数后自动恢复
+\end{itemize}
+
+% ═══════════════════════════════════════════
+\section{拖拽挣扎动画 (Live2DRenderer)}
+% ═══════════════════════════════════════════
+
+\subsection{设计目标}
+
+拖拽时角色应表现出\"被提着走\"的挣扎感，同时裙子和头发有惯性拖尾效果。
+物理系统（CubismPhysicsController）在拖拽中继续运作，但参数值会被挣扎动画覆盖。
+
+\subsection{核心机制}
+
+拖拽挣扎动画通过帧间速度驱动：每帧计算 $\Delta x = petX_{t} - petX_{t-1}$，
+经平滑滤波后驱动各参数：
+
+\begin{itemize}
+    \item \textbf{双臂交替划水}：右臂正=向前，左臂负=向前，同相位实现交替
+        \begin{itemize}
+            \item 大幅摆动：Param94（上臂旋转，范围 [-30,60]）
+            \item 小幅：Param31/32/33（右臂），Param34/36/37（左臂）
+            \item 手部透视图层跟随幅度（自动浮到衣服前）
+        \end{itemize}
+    \item \textbf{双腿交替}：Param126/129 腿前后摆动，Param127/131 腿弯曲
+    \item \textbf{身体扭动}：ParamBodyAngleY 跟随鼠标方向平滑转身
+    \item \textbf{表情}：瞪眼 + 张嘴（\"慌张\"表情）
+\end{itemize}
+
+\subsection{直接物理驱动}
+
+帧间速度经平滑后直接写入 Cubism 参数，为 CubismPhysics 提供输入信号：
+
+\begin{itemize}
+    \item \textbf{裙子}：Param82（前摆动）、Param87（后摆动）、Param84（侧摆动）
+    \item \textbf{法盘}：Param49/51/57/60（法盘旋转/摆动）
+    \item \textbf{头发}：20 个输出参数（Param5/7/9/11/14/17/19/21/23/35/41/43/45/55/62/91/74/89/169 等）
+    \item \textbf{头部}：ParamAngleX/Z 跟随速度方向
+\end{itemize}
+
+所有直接驱动参数绕过物理系统的 Delay=0.8s 延迟，实现即时响应。
+
+% ═══════════════════════════════════════════
+\section{时间/天气响应系统 (TimeWeatherController)}
+% ═══════════════════════════════════════════
+
+\subsection{概述}
+
+\texttt{TimeWeatherController} 负责感知系统时间和当地天气，向 \texttt{Live2DRenderer} 提供状态信息，使宠物的表情、动作权重和待机气泡内容随昼夜/天气变化。
+
+\subsection{时间系统}
+
+\begin{itemize}
+    \item 使用 \texttt{System.DateTime.Now} 获取当地小时（0-23）
+    \item \texttt{isNight}：18:00 - 6:00（夜间模式）
+    \item \texttt{isSleepyTime}：22:00 - 5:00（犯困时段）
+    \item \texttt{dayPhase}：6:00 = 0.0，12:00 = 0.5，18:00 = 1.0（用于渐变）
+\end{itemize}
+
+\subsection{天气系统}
+
+\begin{itemize}
+    \item 通过 wttr.in API 获取当地天气（城市可配，留空=自动 IP 定位）
+    \item 轮询间隔默认 300 秒（可配）
+    \item 解析天气类型：Clear / Cloudy / Overcast / Rain / Drizzle / Thunder / Snow / Fog
+    \item 同时解析温度（用于气泡文本）
+    \item 首次启动立即获取，失败时保留 Unknown 状态
+\end{itemize}
+
+\subsection{表情联动}
+
+在 \texttt{UpdateIdleAnimation()} 中叠加昼夜/天气基调表情：
+
+\begin{table}[H]
+\centering
+\caption{昼夜/天气表情联动}
+\label{tab:weather-emotion}
+\begin{tabular}{ll}
+\toprule
+\textbf{条件} & \textbf{表情} \\
+\midrule
+犯困时段（22-5点） & 眼皮微垂（EyeOpen lerp 0.7） \\
+夜晚（18-22点）    & 轻度眼皮下垂 \\
+阴雨/雷雨/阴天    & 眉毛微抬 + 嘴巴微嘟（委屈） \\
+晴/多云          & 自然微笑 \\
+雪              & 微微张嘴（好奇）+ 眼睛睁大 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{动作权重调节}
+
+\texttt{PickWeightedIdleAction()} 动态调整权重：
+
+\begin{itemize}
+    \item 夜间：星辉/爱心眼减少，委屈增加
+    \item 犯困时段：委屈+2，歪头+1
+    \item 雨天：委屈+2，爱心眼/数钱减少
+    \item 晴天：爱心眼+1，星辉+1
+    \item 雪天：挑眉+1，委屈+1
+\end{itemize}
+
+\subsection{待机气泡联动}
+
+\texttt{PickIdleBubbleMessage()} 50\% 概率触发时间/天气特化气泡：
+
+\begin{itemize}
+    \item 犯困时段：\"好晚了…该睡了~\"\"眼睛快睁不开了…\"
+    \item 夜晚：\"晚上好呀~\"\"月色真美…\"
+    \item 早晨（5-8点）：\"早安~\"\"今天也要加油哦！\"
+    \item 雨天：\"下雨了呢~\"\"听雨声发呆~\"
+    \item 雷雨：\"打雷了好可怕！\"\"轰隆隆…好吓人…\"
+    \item 雪：\"下雪了！好漂亮~\"\"想堆雪人…\"
+    \item 晴天：\"今天天气真好~\"\"太阳暖洋洋的~\"
 \end{itemize}
 
 % ═══════════════════════════════════════════
@@ -448,6 +567,18 @@ Cubism SDK 通过 \texttt{CubismUpdateController} 统一调度所有 \texttt{ICu
     \item 进入自由落体状态
 \end{enumerate}
 
+\subsection{分区点击反馈}
+
+点击时根据点击位置（归一化高度 0-1）分 3 区反馈：
+
+\begin{itemize}
+    \item \textbf{头部区域}（hitNormY $<$ 0.35）：戳脸 — 睁大眼 + 张嘴 + 挑眉，如"呜哇！戳到脸了"
+    \item \textbf{身体区域}（hitNormY $<$ 0.65）：摸身体 — 害羞低头 + 微笑 + 眼神躲闪
+    \item \textbf{腿部区域}（hitNormY $\geq$ 0.65）：踢腿 — 腿向前伸 + 坏笑 + 眯眼
+\end{itemize}
+
+反应持续期间设置 \texttt{\_poseLocked = true}，参数保存在 \texttt{\_clickSavedParams} 字典中，\texttt{LateUpdate} 重新写入以对抗 \texttt{CubismPhysicsController} 的覆盖。
+
 \subsection{右键菜单}
 
 \begin{enumerate}
@@ -621,6 +752,13 @@ public interface IPetRenderer
     \item 3.5s 完成
 \end{itemize}
 
+\subsubsection{动作 11 --- 困惑（AI 触发专用）}
+\begin{itemize}
+    \item 歪头 + 皱眉 + 眯眼
+    \item 权重为 0（不自发触发，仅外部强制调用）
+    \item 3s 完成
+\end{itemize}
+
 \subsection{眨眼系统}
 
 \begin{itemize}
@@ -656,13 +794,20 @@ Desktop_per_pro/
     |   |   +-- scene.scene               # 主场景
     |   +-- Scripts/
     |   |   +-- DesktopPet.cs              # 主控 + 物理 + 状态机
-    |   |   +-- Live2DRenderer.cs          # Live2D 渲染 + 动画
+    |   |   +-- Live2DRenderer.cs          # Live2D 渲染 + 动画 + 物理驱动
     |   |   +-- ContextMenu.cs             # 右键菜单 UI
-    |   |   +-- DragHandler.cs             # 拖拽/抛掷交互
+    |   |   +-- DragHandler.cs             # 拖拽/抛掷/点击交互
     |   |   +-- WindowOverlay.cs           # Win32 透明窗口
+    |   |   +-- TimeWeatherController.cs   # 昼夜/天气响应
+    |   |   +-- ChatBubble.cs              # 头顶气泡
+    |   |   +-- ChatManager.cs             # AI 对话管理
+    |   |   +-- AutoChat.cs                # 自动闲聊
+    |   |   +-- BottomInputBar.cs          # 底部输入栏
     |   |   +-- HybridRenderer.cs          # 混合渲染管理器
     |   |   +-- IPetRenderer.cs            # 渲染器接口
     |   |   +-- Model3DRenderer.cs         # 3D 渲染器 (预留)
+    |   |   +-- DebugWindow.cs             # 调试调参面板
+    |   |   +-- ToolCallInvoker.cs         # AI 工具调用
     |   +-- Live2D/
     |   |   +-- Models/Fuxuan/             # 符玄 Live2D 模型
     |   +-- Plugins/                       # Cubism SDK
@@ -727,6 +872,13 @@ Desktop_per_pro/
            &      & 体态参数提前到 Update() 设置供物理驱动衣服；\\
            &      & 分离大/小范围手臂参数常量避免 clamp 满幅；\\
            &      & 走路时 ForceUpdateNow 强制网格重算 \\
+2026-06-17 & v0.8 & 头发/裙子/法盘直接物理驱动（20+ 输出参数绕过物理延迟）\\
+           &      & 分区点击反馈（头/身/腿 3 区 + 参数保存防覆盖）\\
+           &      & 拖拽挣扎动画（双臂划水 + 双腿交替 + 扭动 + 表情）\\
+           &      & 时间/天气响应系统（wttr.in API + 昼夜犯困 + 天气表情）\\
+           &      & 新增第 11 个空闲动作「困惑」\\
+           &      & 待机气泡支持时间/天气特化内容\\
+           &      & 更新项目文档 README + LaTeX\\
 \bottomrule
 \end{tabular}
 \end{table}
