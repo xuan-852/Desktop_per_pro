@@ -256,7 +256,13 @@ public class DesktopPet : MonoBehaviour
 
         // ========== v1 行为：拖拽时完全冻结物理 ==========
         if (isDragging)
+        {
+            // ★ 拖拽时仍要通知渲染器切换挣扎动画（物理不更新）
+            if (_renderer != null)
+                _renderer.OnPetUpdate(petX, petY, petWidth, petHeight,
+                    petVx, petVy, onGround, isDragging, isPaused);
             return;
+        }
 
         // 通知渲染器更新状态
         if (_renderer != null)
@@ -314,6 +320,8 @@ public class DesktopPet : MonoBehaviour
                 else
                 {
                     petVx = -petVx;
+                    // 碰撞反弹动画
+                    if (_renderer != null) _renderer.ShowWallHitPose(-1);
                 }
             }
         }
@@ -329,6 +337,8 @@ public class DesktopPet : MonoBehaviour
                 else
                 {
                     petVx = -petVx;
+                    // 碰撞反弹动画
+                    if (_renderer != null) _renderer.ShowWallHitPose(1);
                 }
             }
         }

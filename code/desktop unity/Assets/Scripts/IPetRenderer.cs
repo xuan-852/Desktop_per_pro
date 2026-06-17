@@ -21,4 +21,13 @@ public interface IPetRenderer
     /// <summary>每帧更新渲染器（位置更新等）</summary>
     void OnPetUpdate(int petX, int petY, int petWidth, int petHeight,
                      int petVx, int petVy, bool onGround, bool isDragging, bool isPaused);
+
+    /// <summary>屏幕边缘碰撞反弹动画</summary>
+    /// <param name="direction">碰撞方向：-1=左墙, 1=右墙</param>
+    void ShowWallHitPose(int direction);
+
+    /// <summary>设置鼠标眼睛跟随目标</summary>
+    /// <param name="targetX">水平方向 -1~1，null=恢复默认</param>
+    /// <param name="targetY">垂直方向 -1~1，null=恢复默认</param>
+    void SetEyeTarget(float? targetX, float? targetY);
 }

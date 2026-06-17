@@ -235,6 +235,16 @@ public class Model3DRenderer : MonoBehaviour, IPetRenderer
         SetSpeed(0f);
     }
 
+    public void ShowWallHitPose(int direction)
+    {
+        // 3D 模型暂不实现
+    }
+
+    public void SetEyeTarget(float? targetX, float? targetY)
+    {
+        // 3D 模型暂不实现
+    }
+
     public void OnPetUpdate(int petX, int petY, int petWidth, int petHeight,
                             int petVx, int petVy, bool onGround, bool isDragging, bool isPaused)
     {

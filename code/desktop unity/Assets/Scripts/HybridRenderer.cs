@@ -144,6 +144,10 @@ public class HybridRenderer : MonoBehaviour, IPetRenderer
     public void ShowWalkPose() { RequestSwitch(false); live2DRenderer.ShowWalkPose(); }
     public void ShowStopPose(float lockSeconds) { RequestSwitch(false); live2DRenderer.ShowStopPose(lockSeconds); }
 
+    public void ShowWallHitPose(int direction) { live2DRenderer.ShowWallHitPose(direction); }
+
+    public void SetEyeTarget(float? targetX, float? targetY) { live2DRenderer.SetEyeTarget(targetX, targetY); }
+
     public void OnPetUpdate(int petX, int petY, int petWidth, int petHeight,
                             int petVx, int petVy, bool onGround, bool isDragging, bool isPaused)
     {

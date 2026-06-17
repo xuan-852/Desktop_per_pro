@@ -83,6 +83,12 @@ public class ChatBubble : MonoBehaviour
         _animProgress = 0f;
     }
 
+    /// <summary>气泡是否正在显示（含淡入/淡出动画过程中）</summary>
+    public bool IsShowing
+    {
+        get { return _hasMessage && _state != BubbleState.Hidden; }
+    }
+
     // ============================================================
     //  Update — 驱动动画状态机
     // ============================================================

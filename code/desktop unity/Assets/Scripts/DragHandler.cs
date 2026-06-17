@@ -50,6 +50,10 @@ public class DragHandler : MonoBehaviour
     [Tooltip("点击后强制暂停时间（秒）")]
     public float clickPauseDuration = 1.0f;
 
+    [Header("眼睛跟随")]
+    [Tooltip("鼠标在此距离内触发眼睛跟随（像素）")]
+    public float eyeFollowDistance = 150f;
+
     // 拖拽状态
     private bool _isDragging = false;
     private bool _isClickCandidate = false;
@@ -61,6 +65,10 @@ public class DragHandler : MonoBehaviour
     // 公开事件（供 AutoChat 监听）
     public System.Action OnPetClicked;
     public System.Action OnDragEnded;
+
+    // 上次交互时间（供睡觉系统检测无交互时长）
+    [System.NonSerialized]
+    public float lastInteractionTime = 0f;
 
     // 右键菜单
     private ContextMenu _contextMenu;
@@ -148,6 +156,7 @@ public class DragHandler : MonoBehaviour
         // ========== 3. 鼠标左键按下 ==========
         if (Input.GetMouseButtonDown(0))
         {
+            lastInteractionTime = Time.time;
             Vector2 mousePos = GetMousePos();
             if (IsPointInPet(mousePos))
             {
@@ -164,6 +173,7 @@ public class DragHandler : MonoBehaviour
         // ========== 4. 鼠标移动（按住左键） ==========
         if (Input.GetMouseButton(0) && _isClickCandidate)
         {
+            lastInteractionTime = Time.time;
             Vector2 mousePos = GetMousePos();
             Vector2 delta = mousePos - _dragStartMouse;
 
@@ -230,6 +240,50 @@ public class DragHandler : MonoBehaviour
 
             _isDragging = false;
             _isClickCandidate = false;
+        }
+
+        // ========== 6. 眼睛跟随鼠标（鼠标靠近宠物时眼睛看鼠标方向）==========
+        UpdateEyeFollow();
+    }
+
+    /// <summary>
+    /// 计算鼠标到宠物中心的距离，靠近时通知渲染器眼睛跟随
+    /// </summary>
+    private void UpdateEyeFollow()
+    {
+        if (_renderer == null || _pet == null) return;
+
+        // 菜单打开或暂停时不跟随
+        if (_contextMenu != null && _contextMenu.IsOpen) { _renderer.SetEyeTarget(null, null); return; }
+        if (_pet.isPaused) { _renderer.SetEyeTarget(null, null); return; }
+        if (_pet.isDragging) { _renderer.SetEyeTarget(null, null); return; }
+
+        Vector2 mousePos = GetMousePos();
+
+        // 宠物中心
+        float centerX = _pet.petX + _pet.petWidth / 2f;
+        float centerY = _pet.petY + _pet.petHeight / 2f;
+
+        float dx = mousePos.x - centerX;
+        float dy = mousePos.y - centerY;
+        float dist = Mathf.Sqrt(dx * dx + dy * dy);
+
+        if (dist <= eyeFollowDistance && dist > 0.1f)
+        {
+            // 鼠标靠近也算交互，重置无交互计时
+            lastInteractionTime = Time.time;
+
+            // 归一化方向向量，距离越近越满
+            float t = 1f - Mathf.Clamp01(dist / eyeFollowDistance);
+            float eased = t * t; // 平方让靠近时更快看向鼠标
+            float targetX = (dx / dist) * eased;
+            float targetY = (dy / dist) * eased;
+            _renderer.SetEyeTarget(targetX, targetY);
+        }
+        else
+        {
+            // 超出距离，恢复默认眼球动画
+            _renderer.SetEyeTarget(null, null);
         }
     }
 
