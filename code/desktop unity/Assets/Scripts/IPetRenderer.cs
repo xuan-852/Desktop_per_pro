@@ -6,11 +6,8 @@ public interface IPetRenderer
     /// <summary>切换到拖拽姿势</summary>
     void ShowDragPose();
 
-    /// <summary>点击区域枚举</summary>
-    enum ClickZone { Head, Body, Feet, Unknown }
-
-    /// <summary>切换到点击姿势（按区域不同反应）</summary>
-    void ShowClickPose(ClickZone zone = ClickZone.Unknown);
+    /// <summary>切换到点击姿势</summary>
+    void ShowClickPose();
 
     /// <summary>切换到落地姿势</summary>
     void ShowLandPose();

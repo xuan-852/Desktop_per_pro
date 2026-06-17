@@ -215,7 +215,7 @@ public class Model3DRenderer : MonoBehaviour, IPetRenderer
         SetSpeed(0f);
     }
 
-    public void ShowClickPose(IPetRenderer.ClickZone zone = IPetRenderer.ClickZone.Unknown)
+    public void ShowClickPose()
     {
         SetSpeed(0f);
     }

@@ -125,15 +125,6 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     const float CLICK_HEAD_ANGLE_X = 8f;     // 点击头部角度
     const float CLICK_EYE_OPEN     = 0.3f;   // 点击眯眼
     const float CLICK_LOCK_TIME    = 1.0f;   // 点击姿势锁定秒数
-
-    // -- 分区域点击反应 --
-    const float CLICK_HEAD_TILT         = 15f;   // 摸头→歪头开心
-    const float CLICK_HEAD_SMILE        = 0.7f;  // 摸头→微笑
-    const float CLICK_HEAD_EYE_CLOSE    = 0.2f;  // 摸头→眯眼
-    const float CLICK_BODY_STARTLE      = 3f;    // 戳身体→惊吓微颤
-    const float CLICK_BODY_EYE_OPEN     = 1.3f;  // 戳身体→睁大眼
-    const float CLICK_FEET_LOOK_DOWN    = 12f;   // 戳脚→低头看
-    const float CLICK_FEET_ANGLE_X      = -8f;   // 戳脚→身体前倾
     // ==================================================
     [Header("模型 Prefab")]
     [Tooltip("Cubism SDK 导入后生成的模型 Prefab（不拖也行，代码自动按路径加载）")]
@@ -1345,46 +1336,14 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         _poseLocked = false;
     }
 
-    public void ShowClickPose(IPetRenderer.ClickZone zone = IPetRenderer.ClickZone.Unknown)
+    public void ShowClickPose()
     {
+        SetParameter("ParamEyeLOpen", CLICK_EYE_OPEN);
+        SetParameter("ParamEyeROpen", CLICK_EYE_OPEN);
+        SetParameter("ParamAngleX", CLICK_HEAD_ANGLE_X);
+        SetParameter("ParamBodyAngleX", CLICK_BODY_ANGLE_X);
         _poseLocked = true;
         _poseLockUntil = Time.time + CLICK_LOCK_TIME;
-
-        switch (zone)
-        {
-            case IPetRenderer.ClickZone.Head:
-                // 摸头→歪头微笑眯眼
-                SetParameter("ParamAngleZ", CLICK_HEAD_TILT);
-                SetParameter("ParamEyeLSmile", CLICK_HEAD_SMILE);
-                SetParameter("ParamEyeRSmile", CLICK_HEAD_SMILE);
-                SetParameter("ParamEyeLOpen", CLICK_HEAD_EYE_CLOSE);
-                SetParameter("ParamEyeROpen", CLICK_HEAD_EYE_CLOSE);
-                break;
-
-            case IPetRenderer.ClickZone.Body:
-                // 戳身体→惊吓睁大眼 + 微颤
-                SetParameter("ParamEyeLOpen", CLICK_BODY_EYE_OPEN);
-                SetParameter("ParamEyeROpen", CLICK_BODY_EYE_OPEN);
-                SetParameter("ParamBodyAngleX", CLICK_BODY_STARTLE);
-                SetParameter("ParamAngleX", CLICK_HEAD_ANGLE_X);
-                break;
-
-            case IPetRenderer.ClickZone.Feet:
-                // 戳脚→低头看 + 身体前倾
-                SetParameter("ParamAngleY", CLICK_FEET_LOOK_DOWN);
-                SetParameter("ParamBodyAngleX", CLICK_FEET_ANGLE_X);
-                SetParameter("ParamEyeLOpen", CLICK_EYE_OPEN);
-                SetParameter("ParamEyeROpen", CLICK_EYE_OPEN);
-                break;
-
-            default:
-                // 默认→现有逻辑
-                SetParameter("ParamEyeLOpen", CLICK_EYE_OPEN);
-                SetParameter("ParamEyeROpen", CLICK_EYE_OPEN);
-                SetParameter("ParamAngleX", CLICK_HEAD_ANGLE_X);
-                SetParameter("ParamBodyAngleX", CLICK_BODY_ANGLE_X);
-                break;
-        }
     }
 
     public void ShowLandPose()
