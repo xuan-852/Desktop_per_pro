@@ -246,6 +246,14 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     private ChatBubble _chatBubble;
     private TimeWeatherController _timeController;
 
+    // ===== 模型置顶（RenderTexture 叠层） =====
+    private const int OVERLAY_LAYER = 31;            // 专用层
+    private Camera _overlayCamera;
+    private RenderTexture _overlayRT;
+    private bool _overlayReady = false;
+    private int _overlayScreenW = 0;
+    private int _overlayScreenH = 0;
+
     // 姿势锁定
     private bool _poseLocked = false;
     private float _poseLockUntil = 0f;
@@ -367,7 +375,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             _modelRoot = Instantiate(modelPrefab, transform);
             
             // 设置 Layer（确保 Camera 能看到）
-            SetLayerRecursively(_modelRoot, 0); // 0 = Default
+            // ★ 模型置顶：移到叠加层，不被主相机渲染
+            SetLayerRecursively(_modelRoot, OVERLAY_LAYER);
+            ExcludeOverlayLayerFromMainCamera();
             
             Debug.Log($"[Live2DRenderer] _modelRoot={_modelRoot.name}, activeSelf={_modelRoot.activeSelf}, activeInHierarchy={_modelRoot.activeInHierarchy}");
             Debug.Log($"[Live2DRenderer] _modelRoot.transform.childCount={_modelRoot.transform.childCount}");
@@ -387,6 +397,8 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
                 Debug.Log($"[Live2DRenderer] CubismRenderController.enabled={renderController.enabled}");
             }
 
+            SetupOverlayRendering();
+            
             _loaded = true;
             Debug.Log($"[Live2DRenderer] 模型 Prefab 实例化完成, CubismModel={_cubismModel != null}, Physics={_physicsController != null}");
             if (_cubismModel != null)
@@ -1959,6 +1971,108 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         {
             ListAllChildren(child.gameObject, depth + 1);
         }
+    }
+
+    // ============================================================
+    //  模型置顶 — 叠加渲染
+    // ============================================================
+
+    /// <summary>从主相机剔除叠加层</summary>
+    private void ExcludeOverlayLayerFromMainCamera()
+    {
+        Camera cam = Camera.main;
+        if (cam == null) return;
+        cam.cullingMask &= ~(1 << OVERLAY_LAYER);
+        Debug.Log($"[Live2DRenderer] 主相机已剔除 Layer {OVERLAY_LAYER}");
+    }
+
+    /// <summary>设置叠加相机+RT</summary>
+    private void SetupOverlayRendering()
+    {
+        if (_modelRoot == null) return;
+
+        Camera mainCam = Camera.main;
+        if (mainCam == null) return;
+
+        // 创建 RT
+        _overlayScreenW = Screen.width;
+        _overlayScreenH = Screen.height;
+        _overlayRT = new RenderTexture(_overlayScreenW, _overlayScreenH, 24, RenderTextureFormat.ARGB32);
+        _overlayRT.name = "ModelOverlayRT";
+        _overlayRT.Create();
+
+        // 创建叠加相机
+        GameObject camGO = new GameObject("ModelOverlayCamera");
+        camGO.transform.parent = transform;
+        camGO.transform.position = mainCam.transform.position;
+        camGO.transform.rotation = mainCam.transform.rotation;
+        _overlayCamera = camGO.AddComponent<Camera>();
+        _overlayCamera.CopyFrom(mainCam);
+        _overlayCamera.targetTexture = _overlayRT;
+        _overlayCamera.cullingMask = 1 << OVERLAY_LAYER;
+        _overlayCamera.clearFlags = CameraClearFlags.SolidColor;
+        _overlayCamera.backgroundColor = new Color(0f, 0f, 0f, 0f);
+        _overlayCamera.depth = mainCam.depth + 1;
+        _overlayCamera.allowHDR = false;
+        _overlayCamera.allowMSAA = false;
+
+        _overlayReady = true;
+        Debug.Log($"[Live2DRenderer] 叠加相机就绪 RT=({_overlayScreenW}x{_overlayScreenH})");
+    }
+
+    /// <summary>每帧同步叠加相机位置</summary>
+    private void SyncOverlayCamera()
+    {
+        if (_overlayCamera == null) return;
+        Camera mainCam = Camera.main;
+        if (mainCam == null) return;
+        _overlayCamera.transform.position = mainCam.transform.position;
+        _overlayCamera.transform.rotation = mainCam.transform.rotation;
+        _overlayCamera.orthographicSize = mainCam.orthographicSize;
+        _overlayCamera.fieldOfView = mainCam.fieldOfView;
+    }
+
+    void OnGUI()
+    {
+        if (!_overlayReady || _overlayRT == null || _pet == null) return;
+
+        // 窗口大小变了就重建 RT
+        if (Screen.width != _overlayScreenW || Screen.height != _overlayScreenH)
+        {
+            _overlayScreenW = Screen.width;
+            _overlayScreenH = Screen.height;
+            if (_overlayRT != null) _overlayRT.Release();
+            _overlayRT = new RenderTexture(_overlayScreenW, _overlayScreenH, 24, RenderTextureFormat.ARGB32);
+            _overlayRT.name = "ModelOverlayRT";
+            _overlayRT.Create();
+            _overlayCamera.targetTexture = _overlayRT;
+        }
+
+        SyncOverlayCamera();
+
+        // GUI.depth = 1 → 在 BottomInputBar(depth=0) 之上绘制
+        GUI.depth = 1;
+
+        // ★ 全屏绘制 RT — 叠加相机只渲染了 Layer 31（模型），背景透明 (0,0,0,0)
+        //   用 alphaBlend=true 让透明区域露出下方的输入栏等 GUI 元素
+        //   不再裁剪到 pet 范围（模型实际尺寸远大于 170px，裁剪导致头/脚消失）
+        GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), _overlayRT, ScaleMode.StretchToFill, true);
+    }
+
+    private void OnDestroy()
+    {
+        if (_overlayRT != null)
+        {
+            _overlayRT.Release();
+            Destroy(_overlayRT);
+            _overlayRT = null;
+        }
+        if (_overlayCamera != null)
+        {
+            Destroy(_overlayCamera.gameObject);
+            _overlayCamera = null;
+        }
+        _overlayReady = false;
     }
 
     private void SetLayerRecursively(GameObject go, int layer)

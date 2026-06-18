@@ -7,11 +7,11 @@ using UnityEngine;
 /// </summary>
 public class BottomInputBar : MonoBehaviour
 {
-    // ===== 固定坐标（玩家调整后写入） =====
+    // ===== 固定坐标（‼️ 不要改动 ‼️ left=265 right=635 top=1528 bottom=1600） =====
     private const float BAR_LEFT = 265f;
     private const float BAR_RIGHT = 635f;
     private const float BAR_TOP = 1528f;
-    private const float BAR_BOTTOM = 1602f;
+    private const float BAR_BOTTOM = 1600f;
 
     // 便捷访问
     public float BarLeft => BAR_LEFT;
@@ -28,11 +28,8 @@ public class BottomInputBar : MonoBehaviour
     // ===== 样式 =====
     private GUIStyle _barBgStyle;
     private GUIStyle _inputStyle;
-    private GUIStyle _sendBtnStyle;
     private Texture2D _bgTex;
     private Texture2D _inputBgTex;
-    private Texture2D _btnTex;
-    private Texture2D _btnHoverTex;
     private bool _stylesReady = false;
 
     // ===== 淡入动画 =====
@@ -93,8 +90,6 @@ public class BottomInputBar : MonoBehaviour
         // Windows 搜索风格 — 白色干净背景
         _bgTex = MakeTex(1, 1, new Color(1f, 1f, 1f, 0.92f));                // 白底
         _inputBgTex = MakeTex(1, 1, new Color(0.85f, 0.85f, 0.88f, 0.6f));  // 浅灰输入框底
-        _btnTex = MakeTex(1, 1, new Color(0.20f, 0.50f, 0.95f, 1f));        // 蓝按钮
-        _btnHoverTex = MakeTex(1, 1, new Color(0.15f, 0.40f, 0.85f, 1f));   // 深蓝悬停
 
         _barBgStyle = new GUIStyle
         {
@@ -109,17 +104,6 @@ public class BottomInputBar : MonoBehaviour
             padding = new RectOffset(10, 10, 6, 6),
             margin = new RectOffset(0, 4, 0, 0),
             alignment = TextAnchor.MiddleLeft
-        };
-
-        _sendBtnStyle = new GUIStyle(GUI.skin.button)
-        {
-            normal = { textColor = Color.white, background = _btnTex },
-            hover = { background = _btnHoverTex },
-            fontSize = 12,
-            fontStyle = FontStyle.Normal,
-            alignment = TextAnchor.MiddleCenter,
-            padding = new RectOffset(6, 6, 2, 2),
-            margin = new RectOffset(0, 4, 0, 0)
         };
     }
 
@@ -141,9 +125,9 @@ public class BottomInputBar : MonoBehaviour
         float padT = 8f;
         float padB = 8f;
 
-        // ——— 放大输入框 + 发送按钮 ———
+        // ——— 输入框（全宽，发送按钮已删除，按 Enter 发送） ———
         float inputH = h - padT - padB;
-        float inputW = w - padL - padR - 66f;
+        float inputW = w - padL - padR;
         float inputY = y + padT;
 
         // Enter 检测
@@ -156,29 +140,12 @@ public class BottomInputBar : MonoBehaviour
         GUI.SetNextControlName("bottomChatInput");
         _inputText = GUI.TextField(new Rect(BarLeft + padL, inputY, inputW, inputH), _inputText, _inputStyle);
 
-        bool hasInput = !string.IsNullOrWhiteSpace(_inputText);
-        bool chatReady = _chat != null;
-        bool canSend = hasInput && chatReady;
-        bool isWaiting = chatReady && _chat.IsWaiting;
-
-        Color origColor = GUI.color;
-        if (!canSend) GUI.color = new Color(1f, 1f, 1f, 0.4f);
-
-        string btnLabel = isWaiting ? "📤" : (hasInput ? "发送" : "💬");
-        if (GUI.Button(new Rect(BarLeft + padL + inputW + 4f, inputY, 56f, inputH),
-            btnLabel, _sendBtnStyle))
-        {
-            if (canSend) enterPressed = true;
-        }
-
-        GUI.color = origColor;
-
-        if (enterPressed && canSend)
+        if (enterPressed)
         {
             Event.current.Use();
             string msg = _inputText.Trim();
             _inputText = "";
-            _chat.SendMessage(msg, null);
+            if (_chat != null) _chat.SendMessage(msg, null);
             GUI.FocusControl(null);
         }
     }

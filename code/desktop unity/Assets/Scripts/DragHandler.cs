@@ -79,6 +79,9 @@ public class DragHandler : MonoBehaviour
     // 底部输入栏引用
     private BottomInputBar _bottomBar;
 
+    // 菜单打开状态追踪（用于关闭后强制重算穿透）
+    private bool _lastFrameMenuOpen = false;
+
     private void Start()
     {
         _pet = GetComponent<DesktopPet>();
@@ -108,6 +111,7 @@ public class DragHandler : MonoBehaviour
         // ★优先处理，不依赖 UpdateClickThrough（避免菜单打开后被 WS_EX_TRANSPARENT 吞掉输入）
         if (_contextMenu != null && _contextMenu.IsOpen)
         {
+            _lastFrameMenuOpen = true;
             Vector2 mousePos = GetMousePos();
             bool overMenu = _contextMenu.IsMouseOverMenu(mousePos);
             _window?.SetClickThrough(!overMenu);   // 菜单区域内可点击，区域外穿透
@@ -123,6 +127,18 @@ public class DragHandler : MonoBehaviour
             {
                 return; // 菜单打开且无右键时不处理拖拽
             }
+        }
+
+        // ========== 菜单关闭检测：前一帧还开着，这帧关了 ==========
+        // ★ 强制重置穿透缓存，下一帧 UpdateClickThrough 根据鼠标位置重新设穿透
+        if (_lastFrameMenuOpen)
+        {
+            _lastFrameMenuOpen = false;
+            _mouseOverPet = false;
+            // 立刻关穿透让桌面恢复点击（如果鼠标不在宠物上）
+            bool overPet = IsPointInPet(GetMousePos());
+            _window?.SetClickThrough(!overPet);
+            Debug.Log($"[DragHandler] 菜单关闭，强制重置穿透: overPet={overPet}");
         }
 
         // ========== 1. 每帧更新点击穿透（★必须在输入检测之前，否则右键被 WS_EX_TRANSPARENT 吞掉）==========
@@ -303,6 +319,14 @@ public class DragHandler : MonoBehaviour
     /// <summary>
     /// 每帧根据鼠标位置动态设置点击穿透
     /// </summary>
+    /// <summary>
+    /// 窗口就绪后调用，强制下一帧重算穿透状态（解决启动时序问题）
+    /// </summary>
+    public void ResetClickState()
+    {
+        _mouseOverPet = false; // 强制下一帧 UpdateClickThrough 重新评估
+    }
+
     private void UpdateClickThrough()
     {
         if (_window == null) return;
@@ -322,6 +346,7 @@ public class DragHandler : MonoBehaviour
 
         if (needInput != _mouseOverPet)
         {
+            UnityEngine.Debug.Log($"[DragHandler] 穿透状态变更: mouseOverPet={_mouseOverPet}→{needInput}, mouse=({mousePos.x},{mousePos.y}), pet=({_pet.petX},{_pet.petY},{_pet.petWidth},{_pet.petHeight})");
             _mouseOverPet = needInput;
             _window.SetClickThrough(!needInput);
         }

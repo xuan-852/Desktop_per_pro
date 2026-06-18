@@ -97,6 +97,10 @@ public class WindowOverlay : MonoBehaviour
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+
     private const int SW_SHOWNA = 8;
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -126,8 +130,8 @@ public class WindowOverlay : MonoBehaviour
     [Tooltip("窗口高度（像素），0=全屏高度")]
     public int height = 0; // 0=全屏
 
-    [Tooltip("点击穿透：鼠标事件透过窗口传到桌面")]
-    public bool clickThrough = false;
+    [Tooltip("点击穿透：鼠标事件透过窗口传到桌面（默认 true=安全启动，DragHandler 每帧动态管理）")]
+    public bool clickThrough = true;
 
     [Tooltip("重试次数")]
     public int maxRetries = 5;
@@ -243,8 +247,8 @@ public class WindowOverlay : MonoBehaviour
         exStyle |= WS_EX_LAYERED | WS_EX_TOPMOST;
         exStyle &= ~WS_EX_APPWINDOW;
         exStyle |= WS_EX_TOOLWINDOW;
-        if (clickThrough)
-            exStyle |= WS_EX_TRANSPARENT;
+        // ★ 不在第一步加穿透，最后统一由 SetClickThrough(false) 配合 DragHandler 管理
+        //    （否则中间时序可能导致 DWM 命中测试状态不一致）
 
         int setResult = SetWindowLong(_hwnd, GWL_EXSTYLE, exStyle);
         if (setResult == 0)
@@ -312,6 +316,26 @@ public class WindowOverlay : MonoBehaviour
         SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, w, h, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 
         _applied = true;
+
+        // ★ 启动时开启穿透，让桌面点击正常通过。
+        //    DragHandler.UpdateClickThrough() 每帧接管，鼠标移到宠物身上时自动关穿透。
+        //    如果启动时关穿透，窗口会拦截桌面鼠标事件，必须拖一次才能恢复。
+        SetClickThrough(true);
+
+        // ★ 通知 DragHandler 强制重设穿透缓存，下一帧根据实际鼠标位置正确评估
+        DragHandler dragHandler = GetComponent<DragHandler>();
+        if (dragHandler != null)
+            dragHandler.ResetClickState();
+
+        // ★★★ 确保窗口能接收输入事件
+        //     WS_EX_TOOLWINDOW + SW_SHOWNA 导致窗口从未成为活动窗口，
+        //     Unity Input.GetMouseButtonDown() 在窗口非活动时不返回 true。
+        //     需要激活窗口一次让 Unity 输入系统初始化。
+        ShowWindow(_hwnd, 5); // SW_SHOW=5，激活窗口
+        SetForegroundWindow(_hwnd);
+        SetWindowPos(_hwnd, HWND_TOPMOST, 0, 0, w, h,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+
         Log($"✅ 透明窗口已就绪: {w}x{h}, 句柄={_hwnd.ToInt64():X8}, 标题='{title}'");
         return true;
     }
@@ -325,8 +349,31 @@ public class WindowOverlay : MonoBehaviour
         string productName = Application.productName;
 
         Log($"本进程 PID={currentPid}, productName='{productName}'");
-        Log($"所有进程窗口:");
 
+        // ★ 方法1: 用 Process.MainWindowHandle — 最简单可靠
+        try
+        {
+            IntPtr mainHwnd = Process.GetCurrentProcess().MainWindowHandle;
+            if (mainHwnd != IntPtr.Zero)
+            {
+                StringBuilder sb = new StringBuilder(256);
+                int len = (int)GetWindowTextW(mainHwnd, sb, sb.Capacity);
+                string title = len > 0 ? sb.ToString().Trim() : "(空标题)";
+                Log($"Process.MainWindowHandle → '{title}' ({mainHwnd.ToInt64():X8})");
+                if (len > 0)
+                {
+                    Log($"匹配窗口: '{title}' ({mainHwnd.ToInt64():X8})");
+                    return mainHwnd;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"Process.MainWindowHandle 失败: {ex.Message}");
+        }
+
+        // ★ 方法2: 枚举窗口，但更严格地跳过非主窗口
+        Log($"回退: 枚举进程窗口...");
         IntPtr found = IntPtr.Zero;
 
         EnumWindows((hWnd, lParam) =>
@@ -345,10 +392,11 @@ public class WindowOverlay : MonoBehaviour
 
                 if (len > 0 && !string.IsNullOrEmpty(title))
                 {
-                    // 跳过已知的内部窗口
+                    // 跳过所有已知的内部窗口 — 尤其警惕单字符标题！
                     if (title.StartsWith("Unity_") || title.StartsWith("UMP_") ||
                         title.StartsWith("D3D") || title.Contains("GfxPlugin") ||
-                        title == "UnityWindowClass" || title == "UnityChildWindow")
+                        title == "UnityWindowClass" || title == "UnityChildWindow" ||
+                        title.Length <= 2)  // ★ 单/双字符标题几乎肯定是内部窗口
                         return true;
 
                     // 优先精确匹配 productName
@@ -369,19 +417,13 @@ public class WindowOverlay : MonoBehaviour
                         return false;
                     }
 
-                    // 特征匹配
+                    // 特征匹配 — 必须有明确的关键词
                     if (title.Contains("Unity") || title.Contains("Player") ||
                         title.IndexOf("desktop", StringComparison.OrdinalIgnoreCase) >= 0)
                     {
                         Log($"  → 特征匹配");
                         found = hWnd;
                         return false;
-                    }
-
-                    // 如果一个可见窗口有标题但没有被跳过，作为最后备选
-                    if (found == IntPtr.Zero && len > 0)
-                    {
-                        found = hWnd;
                     }
                 }
             }
@@ -406,6 +448,12 @@ public class WindowOverlay : MonoBehaviour
         else ex &= ~WS_EX_TRANSPARENT;
         SetWindowLong(_hwnd, GWL_EXSTYLE, ex);
         clickThrough = enabled;
+
+        // ★★★ 关键：SetWindowLong 改完 WS_EX_TRANSPARENT 后，DWM 可能不会立即重新命中测试。
+        //     连续两次 SetWindowPos 强制 DWM 刷新窗口区域和命中测试状态。
+        //     第一次刷帧，第二次确保生效（有用户反馈单次 SWP_FRAMECHANGED 在某些 Win11 版本不够）。
+        SetWindowPos(_hwnd, IntPtr.Zero, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
 
     private void Log(string msg)

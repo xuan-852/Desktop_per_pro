@@ -18,7 +18,7 @@ public class ChatBubble : MonoBehaviour
     public float cornerRadius = 12f;
     public float tailHeight = 14f;
     public float tailWidth = 20f;
-    public float topOffset = 20f;     // 模型头顶到气泡的距离
+    public float topOffset = 70f;     // 模型头顶到气泡的距离（20 和 120 的中间值）
     public float shadowOffset = 3f;
 
     [Header("配色 — 符玄紫灰主题")]
@@ -213,7 +213,7 @@ public class ChatBubble : MonoBehaviour
         _textStyle = new GUIStyle
         {
             normal = { textColor = textColor },
-            fontSize = 13,
+            fontSize = 16,
             wordWrap = true,
             alignment = TextAnchor.UpperCenter,
             richText = true

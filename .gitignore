@@ -22,6 +22,8 @@ project_brief/*.fdb_latexmk
 # Unity 构建日志
 # ================
 code/desktop unity/build_log.txt
+build_log*.txt
+build_*.txt
 [Bb]uild/
 code/desktop unity/[Ll]ogs/
 code/desktop unity/[Uu]ser[Ss]ettings/

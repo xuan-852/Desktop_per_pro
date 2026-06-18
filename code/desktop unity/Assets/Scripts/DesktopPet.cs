@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Runtime.InteropServices;
 using UnityEngine;
@@ -132,6 +133,8 @@ public class DesktopPet : MonoBehaviour
 
     private WindowOverlay _windowOverlay;
     private IPetRenderer _renderer;
+    private SystemTrayManager _trayManager;
+    private bool _pendingEscToTray = false;  // ESC 按下时托盘未就绪，等就绪后自动隐藏
 
     #endregion
 
@@ -144,20 +147,27 @@ public class DesktopPet : MonoBehaviour
         {
             bool createdNew;
             _instanceMutex = new Mutex(true, MutexName, out createdNew);
+
             if (!createdNew)
             {
-                Debug.LogWarning("[DesktopPet] 检测到已有实例在运行，立即退出当前实例");
+                // 已有实例在运行 → 把现有窗口唤起到前台后退出
+                Debug.LogWarning("[DesktopPet] 检测到已有实例在运行，唤醒既有窗口并退出");
 
-                // 在构建版中，立即终止进程（不等帧结束）
                 if (!Application.isEditor)
                 {
+                    // 直接退出，让用户手动切换到已有窗口即可
                     System.Environment.Exit(0);
                 }
 #if UNITY_EDITOR
                 UnityEditor.EditorApplication.isPlaying = false;
 #endif
-                return; // 安全保底
+                return;
             }
+        }
+        catch (System.Threading.AbandonedMutexException)
+        {
+            // 上一个实例崩溃了，Mutex 被系统遗弃 — 我们获得了所有权，正常启动
+            Debug.LogWarning("[DesktopPet] 检测到上一个实例异常崩溃，已接管互斥锁，正常启动");
         }
         catch (System.Exception ex)
         {
@@ -207,6 +217,18 @@ public class DesktopPet : MonoBehaviour
             Debug.Log("[DesktopPet] 自动添加了 WindowOverlay 组件");
         }
 
+        // 初始化系统托盘管理器
+        _trayManager = GetComponent<SystemTrayManager>();
+        if (_trayManager == null)
+        {
+            _trayManager = gameObject.AddComponent<SystemTrayManager>();
+            Debug.Log("[DesktopPet] 自动添加了 SystemTrayManager 组件");
+            // 首次添加时读取开机自启状态
+        }
+
+        // 监听托盘退出请求
+        _trayManager.OnQuitRequested += OnTrayQuitRequested;
+
         // 自动确保 DragHandler 存在
         if (GetComponent<DragHandler>() == null)
         {
@@ -235,6 +257,13 @@ public class DesktopPet : MonoBehaviour
             Debug.Log("[DesktopPet] 自动添加了 TimeWeatherController 组件");
         }
 
+        // 自动确保 ReminderManager 存在
+        if (GetComponent<ReminderManager>() == null)
+        {
+            gameObject.AddComponent<ReminderManager>();
+            Debug.Log("[DesktopPet] 自动添加了 ReminderManager 组件");
+        }
+
         // 获取渲染器引用：优先使用 HybridRenderer
         var hybrid = GetComponent<HybridRenderer>();
         if (hybrid != null)
@@ -259,17 +288,77 @@ public class DesktopPet : MonoBehaviour
         }
 
         Debug.Log($"[DesktopPet] 初始化完成 @ ({petX},{petY}), 屏幕: {Screen.width}x{Screen.height}");
+
+        // 在非编辑器模式下，等待 WindowOverlay 找到句柄后初始化托盘
+        if (!Application.isEditor)
+        {
+            StartCoroutine(WaitForWindowAndInitTray());
+        }
+    }
+
+    private System.Collections.IEnumerator WaitForWindowAndInitTray()
+    {
+        // 等待 WindowOverlay 找到窗口句柄（最多等 10 秒）
+        float timeout = 10f;
+        float elapsed = 0f;
+        while (elapsed < timeout)
+        {
+            if (_windowOverlay != null && _windowOverlay.WindowHandle != IntPtr.Zero)
+            {
+                Debug.Log($"[DesktopPet] 窗口句柄已就绪，初始化托盘管理器");
+                if (_trayManager != null)
+                {
+                    _trayManager.Initialize(_windowOverlay.WindowHandle);
+
+                    // ★ 首次运行自动设置开机自启（写入 HKCU\\Run）
+                    // 这样下次重启后程序会自动启动
+                    if (!_trayManager.AutoStartEnabled)
+                    {
+                        _trayManager.SetAutoStart(true);
+                        Debug.Log("[DesktopPet] 首次运行，已自动设置开机自启");
+                    }
+
+                    // ★ ESC 待处理 — 托盘就绪后立即隐藏
+                    if (_pendingEscToTray)
+                    {
+                        Debug.Log("[DesktopPet] 处理待处理的 ESC，隐藏到托盘");
+                        _trayManager.MinimizeToTray();
+                        _pendingEscToTray = false;
+                    }
+
+                    // ★ 不自动隐藏 — 让用户先看到窗口
+                    // 用户可通过托盘右键菜单隐藏
+                }
+                yield break;
+            }
+            yield return new WaitForSeconds(0.5f);
+            elapsed += 0.5f;
+        }
+        Debug.LogWarning("[DesktopPet] 等待窗口句柄超时，托盘管理器未初始化");
     }
 
     private void Update()
     {
-        // ★ ESC 退出（用 GetAsyncKeyState 无窗口焦点也可检测）
+        // ★ ESC → 隐藏到系统托盘（非编辑器模式）
 #if !UNITY_EDITOR
         bool escDown = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
         if (escDown)
         {
-            Debug.Log("[DesktopPet] ESC 按下，退出程序");
-            Application.Quit();
+            if (_trayManager != null && _trayManager.IsReady)
+            {
+                Debug.Log("[DesktopPet] ESC 按下，隐藏到系统托盘");
+                _trayManager.MinimizeToTray();
+                return;
+            }
+            // 托盘未就绪，标记等待 — 等就绪后自动隐藏
+            if (_trayManager != null && !_trayManager.IsReady)
+            {
+                Debug.Log("[DesktopPet] ESC 按下但托盘未就绪，标记待处理");
+                _pendingEscToTray = true;
+                return;
+            }
+            // 没有托盘管理器 — 忽略
+            Debug.Log("[DesktopPet] ESC 忽略：无托盘管理器");
             return;
         }
 #endif
@@ -426,7 +515,7 @@ public class DesktopPet : MonoBehaviour
         int total = wLeftEdge + wRightEdge + wLeftTime + wRightTime + wStop;
         if (total <= 0) return GroundTask.StopTime; // 安全保底
 
-        int roll = Random.Range(0, total);
+        int roll = UnityEngine.Random.Range(0, total);
 
         if (roll < wLeftEdge) return GroundTask.MoveLeftEdge;
         roll -= wLeftEdge;
@@ -449,7 +538,7 @@ public class DesktopPet : MonoBehaviour
         int wStop = taskWeightStopTime;
         int total = wEdge + wTime + wStop;
         if (total <= 0) return GroundTask.StopTime;
-        int roll = Random.Range(0, total);
+        int roll = UnityEngine.Random.Range(0, total);
         if (roll < wEdge) return GroundTask.MoveRightEdge;
         roll -= wEdge;
         if (roll < wTime) return GroundTask.MoveRightTime;
@@ -463,7 +552,7 @@ public class DesktopPet : MonoBehaviour
         int wStop = taskWeightStopTime;
         int total = wEdge + wTime + wStop;
         if (total <= 0) return GroundTask.StopTime;
-        int roll = Random.Range(0, total);
+        int roll = UnityEngine.Random.Range(0, total);
         if (roll < wEdge) return GroundTask.MoveLeftEdge;
         roll -= wEdge;
         if (roll < wTime) return GroundTask.MoveLeftTime;
@@ -501,12 +590,12 @@ public class DesktopPet : MonoBehaviour
             case GroundTask.MoveLeftTime:
             case GroundTask.MoveRightTime:
                 if (_renderer != null) _renderer.ShowWalkPose();
-                float moveDuration = Random.Range(taskMoveTimeMinMs, taskMoveTimeMaxMs + 1);
+                float moveDuration = UnityEngine.Random.Range(taskMoveTimeMinMs, taskMoveTimeMaxMs + 1);
                 _taskEndTime = Time.time + moveDuration / 1000f;
                 break;
             case GroundTask.StopTime:
                 if (_renderer != null) _renderer.ShowStopPose(0f); // 不锁定姿势，让空闲动作播放
-                float stopDuration = Random.Range(taskStopTimeMinMs, taskStopTimeMaxMs + 1);
+                float stopDuration = UnityEngine.Random.Range(taskStopTimeMinMs, taskStopTimeMaxMs + 1);
                 _taskEndTime = Time.time + stopDuration / 1000f;
                 break;
         }
@@ -563,9 +652,25 @@ public class DesktopPet : MonoBehaviour
 
     // Live2DRenderer 负责所有渲染，无需 OnGUI
 
+    private void OnTrayQuitRequested()
+    {
+        Debug.Log("[DesktopPet] 托盘管理器请求退出程序");
+        OnDestroy(); // 释放互斥锁
+        Application.Quit();
+    }
+
+    private void OnApplicationQuit()
+    {
+        ReleaseMutex();
+    }
+
     private void OnDestroy()
     {
-        // 释放互斥锁
+        ReleaseMutex();
+    }
+
+    private void ReleaseMutex()
+    {
         if (_instanceMutex != null)
         {
             try { _instanceMutex.ReleaseMutex(); } catch { }

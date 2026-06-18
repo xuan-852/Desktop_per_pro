@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 using System.Collections.Generic;
 
@@ -13,11 +14,12 @@ public class ContextMenu : MonoBehaviour
     private Live2DRenderer _renderer;
     private WindowOverlay _window;
     private ChatManager _chat;
+    private ReminderManager _reminders;
 
     // ===== 标签系统 =====
-    private enum Tab { 设置, 动作, 聊天 }
+    private enum Tab { 设置, 动作, 聊天, 便签 }
     private Tab _currentTab = Tab.设置;
-    private string[] _tabNames = { "⚙ 设置", "▶ 动作", "💬 聊天" };
+    private string[] _tabNames = { "⚙ 设置", "▶ 动作", "💬 聊天", "📋 便签" };
 
     // ===== 菜单状态 =====
     private bool _isOpen = false;
@@ -77,6 +79,14 @@ public class ContextMenu : MonoBehaviour
         // 聊天管理器
         _chat = GetComponent<ChatManager>();
         if (_chat == null) _chat = gameObject.AddComponent<ChatManager>();
+
+        // 提醒管理器（使用单例，不重复创建）
+        _reminders = ReminderManager.Instance;
+        if (_reminders == null)
+        {
+            _reminders = GetComponent<ReminderManager>();
+            if (_reminders == null) _reminders = gameObject.AddComponent<ReminderManager>();
+        }
 
         // 工具调用（符玄法阵）
         var toolInvoker = GetComponent<ToolCallInvoker>();
@@ -327,6 +337,7 @@ public class ContextMenu : MonoBehaviour
             case Tab.设置: DrawSettingsTab(); break;
             case Tab.动作: DrawActionsTab(); break;
             case Tab.聊天: DrawChatTab(); break;
+            case Tab.便签: DrawRemindersTab(); break;
         }
 
         GUILayout.EndScrollView();
@@ -489,7 +500,7 @@ public class ContextMenu : MonoBehaviour
 
         CheckLocalSentenceState();
 
-        // ——— 输入区域（用 MinHeight 撑满可见区，推到菜单底部） ———
+        // ——— 输入区域（用 MinHeight 撑满可见区，推到菜单底部，Enter 发送，按钮已删除） ———
         GUILayout.BeginVertical(GUILayout.MinHeight(_menuHeight - 90));
         GUILayout.FlexibleSpace();
         GUILayout.BeginHorizontal();
@@ -503,24 +514,18 @@ public class ContextMenu : MonoBehaviour
         _chatInputText = GUILayout.TextField(_chatInputText, _textFieldStyle,
             GUILayout.Height(24), GUILayout.MinWidth(200));
 
-        bool canSend = !string.IsNullOrWhiteSpace(_chatInputText) && !_chat.IsWaiting;
-
-        if (GUILayout.Button("发送", canSend ? _buttonStyle : _tabButtonStyle,
-            GUILayout.Width(50), GUILayout.Height(24)))
-        {
-            if (canSend)
-                enterPressed = true;
-        }
-
-        if (enterPressed && canSend)
+        if (enterPressed)
         {
             Event.current.Use();
             string msg = _chatInputText;
             _chatInputText = "";
-            if (_isLocalAnimating || _chat.IsSentenceAnimating) _chat.SkipSentenceAnimation();
-            _isLocalAnimating = false;
-            _localSentenceIdx = 0;
-            _chat.SendMessage(msg, null);
+            if (_chat != null)
+            {
+                if (_isLocalAnimating || _chat.IsSentenceAnimating) _chat.SkipSentenceAnimation();
+                _isLocalAnimating = false;
+                _localSentenceIdx = 0;
+                _chat.SendMessage(msg, null);
+            }
             GUI.FocusControl(null);
         }
 
@@ -556,6 +561,189 @@ public class ContextMenu : MonoBehaviour
         GUIUtility.systemCopyBuffer = sb.ToString().TrimEnd();
         _chatStatusMsg = $"✅ 已复制 {_chat.HistoryCount} 条消息到剪贴板";
         _chatStatusColor = Color.green;
+    }
+
+    #endregion
+
+    #region 标签页: 便签
+
+    // ——— 便签相关状态 ———
+    private Vector2 _reminderScrollPos = Vector2.zero;
+    private string _newReminderText = "";
+    private string _newReminderTime = "";
+    private string _reminderStatusMsg = "";
+    private Color _reminderStatusColor = Color.gray;
+    private bool _showAddReminder = false;
+
+    private void DrawRemindersTab()
+    {
+        if (_reminders == null)
+        {
+            GUILayout.Label("⚠ ReminderManager 未初始化", _labelStyle);
+            return;
+        }
+
+        // ——— 状态栏 ———
+        int pendingCount = _reminders.PendingCount;
+        int totalCount = _reminders.GetAllReminders().Count;
+        GUILayout.Label($"📋 卜算记事簿 — {pendingCount} 待办 / {totalCount} 总计", _sectionStyle);
+        GUILayout.Space(2);
+
+        // ——— 操作按钮行 ———
+        GUILayout.BeginHorizontal();
+        if (GUILayout.Button("✚ 新建提醒", _buttonStyle, GUILayout.Height(24)))
+        {
+            _showAddReminder = !_showAddReminder;
+            if (!_showAddReminder) { _newReminderText = ""; _newReminderTime = ""; }
+        }
+        if (GUILayout.Button("🔄 刷新", _buttonStyle, GUILayout.Height(24)))
+        {
+            _reminderStatusMsg = $"已刷新，{pendingCount} 项待办";
+            _reminderStatusColor = Color.green;
+        }
+        GUILayout.EndHorizontal();
+
+        // ——— 新建提醒输入区 ———
+        if (_showAddReminder)
+        {
+            GUILayout.Box("", new GUIStyle { normal = { background = _sectionBg } });
+            GUILayout.Space(2);
+
+            GUILayout.Label("提醒内容：", _labelStyle);
+            _newReminderText = GUILayout.TextField(_newReminderText, _textFieldStyle, GUILayout.Height(22));
+
+            GUILayout.Space(2);
+            GUILayout.Label("时间 (可选, 如 2025-01-15 14:30)：", _labelStyle);
+            _newReminderTime = GUILayout.TextField(_newReminderTime, _textFieldStyle, GUILayout.Height(22));
+
+            GUILayout.Space(2);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("✓ 添加", _buttonStyle, GUILayout.Height(24)))
+            {
+                if (!string.IsNullOrEmpty(_newReminderText))
+                {
+                    DateTime remindAt;
+                    if (string.IsNullOrEmpty(_newReminderTime))
+                        remindAt = DateTime.Now.AddHours(1);
+                    else if (!DateTime.TryParse(_newReminderTime, out remindAt))
+                    {
+                        _reminderStatusMsg = "❌ 时间格式不对，使用 yyyy-MM-dd HH:mm";
+                        _reminderStatusColor = Color.red;
+                        remindAt = DateTime.Now.AddHours(1);
+                    }
+
+                    if (remindAt <= DateTime.Now)
+                        remindAt = DateTime.Now.AddMinutes(5);
+
+                    _reminders.AddReminder(_newReminderText, remindAt, null, "normal", "user");
+                    _reminderStatusMsg = $"✅ 已添加提醒：{_newReminderText}";
+                    _reminderStatusColor = Color.green;
+                    _newReminderText = "";
+                    _newReminderTime = "";
+                    _showAddReminder = false;
+                }
+                else
+                {
+                    _reminderStatusMsg = "❌ 请输入提醒内容";
+                    _reminderStatusColor = Color.red;
+                }
+            }
+            if (GUILayout.Button("✕ 取消", _closeButtonStyle, GUILayout.Width(60), GUILayout.Height(24)))
+            {
+                _showAddReminder = false;
+                _newReminderText = "";
+                _newReminderTime = "";
+            }
+            GUILayout.EndHorizontal();
+            GUILayout.Space(4);
+        }
+
+        // ——— 状态消息 ———
+        if (!string.IsNullOrEmpty(_reminderStatusMsg))
+        {
+            var style = new GUIStyle(_labelStyle) { normal = { textColor = _reminderStatusColor } };
+            GUILayout.Label(_reminderStatusMsg, style);
+            GUILayout.Space(2);
+        }
+
+        // ——— 提醒列表 ———
+        var allReminders = _reminders.GetAllReminders();
+        if (allReminders.Count == 0)
+        {
+            GUILayout.Space(10);
+            GUILayout.Label("📭 暂无提醒事项", new GUIStyle(_labelStyle) { alignment = TextAnchor.MiddleCenter });
+            GUILayout.Space(4);
+            GUILayout.Label("可以让我记下待办，或在上面新建~", new GUIStyle(_labelStyle) { fontSize = 10, normal = { textColor = Color.gray } });
+        }
+        else
+        {
+            _reminderScrollPos = GUILayout.BeginScrollView(_reminderScrollPos, false, true,
+                GUILayout.Height(_menuHeight - 280));
+
+            foreach (var r in allReminders)
+            {
+                string timeStr = "未知时间";
+                if (DateTime.TryParse(r.remindAt, out var dt))
+                    timeStr = dt.ToString("MM-dd HH:mm");
+
+                string status = r.done ? "✅" : "⬜";
+                string recurringTag = r.recurring == "daily" ? " 🔄每日" :
+                                       r.recurring == "weekday" ? " 🔄工作日" :
+                                       r.recurring == "weekly" ? " 🔄每周" : "";
+
+                // 优先级标记
+                string priorityTag = "";
+                Color itemBg = new Color(0.12f, 0.12f, 0.14f, 0.7f);
+                if (r.priority == "high" && !r.done)
+                {
+                    priorityTag = " ⚠️";
+                    itemBg = new Color(0.25f, 0.12f, 0.12f, 0.7f);
+                }
+                else if (r.priority == "low" && !r.done)
+                {
+                    priorityTag = " ☕";
+                }
+
+                // 条目背景
+                GUILayout.BeginHorizontal(new GUIStyle { normal = { background = MakeTex(1, 1, itemBg) } });
+
+                // 勾选框（Toggle）
+                bool newDone = GUILayout.Toggle(r.done,
+                    new GUIContent("", r.done ? "已完成" : "标记完成"),
+                    new GUIStyle { fixedWidth = 20, fixedHeight = 20 });
+                if (newDone != r.done)
+                {
+                    if (newDone) _reminders.MarkDone(r.id);
+                    else { /* 不允许取消完成，保持简单 */ }
+                    _reminderStatusMsg = newDone ? $"✅ 已勾销「{r.text}」" : "";
+                    _reminderStatusColor = Color.green;
+                }
+
+                // 内容
+                string displayText = $"{status} [{timeStr}]{priorityTag}{recurringTag} {r.text}";
+                var itemStyle = new GUIStyle(_labelStyle)
+                {
+                    normal = { textColor = r.done ? new Color(0.5f, 0.5f, 0.5f) : Color.white },
+                    fontSize = 11,
+                    wordWrap = true,
+                    stretchWidth = true
+                };
+                GUILayout.Label(displayText, itemStyle);
+
+                // 删除按钮
+                if (GUILayout.Button("✕", _closeButtonStyle, GUILayout.Width(22), GUILayout.Height(20)))
+                {
+                    _reminders.DeleteReminder(r.id);
+                    _reminderStatusMsg = $"🗑️ 已删除「{r.text}」";
+                    _reminderStatusColor = Color.gray;
+                }
+
+                GUILayout.EndHorizontal();
+                GUILayout.Space(2);
+            }
+
+            GUILayout.EndScrollView();
+        }
     }
 
     #endregion

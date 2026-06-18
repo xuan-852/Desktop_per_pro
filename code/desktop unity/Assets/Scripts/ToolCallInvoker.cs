@@ -283,6 +283,98 @@ public class ToolCallInvoker : MonoBehaviour
             foreach (var f in files) sb.AppendLine($"  📄 {Path.GetFileName(f)}");
             return sb.ToString().Truncate(800);
         };
+
+        // ——— 17. 卜算记事：设置提醒 ———
+        _executors["set_reminder"] = args =>
+        {
+            string text = JsonRead(args, "text");
+            string timeStr = JsonRead(args, "remind_at");
+            if (string.IsNullOrEmpty(text)) return "❌ 未说要提醒何事";
+
+            DateTime remindAt;
+            if (!string.IsNullOrEmpty(timeStr))
+            {
+                if (!DateTime.TryParse(timeStr, out remindAt))
+                    return "❌ 时辰格式不对，本座只识 yyyy-MM-dd HH:mm 之流";
+            }
+            else
+            {
+                remindAt = DateTime.Now.AddHours(1); // 默认 1 小时后
+            }
+
+            if (remindAt <= DateTime.Now)
+            {
+                // 可能是年份算错了，自动逐年修正到未来
+                DateTime fixedTime = remindAt;
+                for (int i = 0; i < 5 && fixedTime <= DateTime.Now; i++)
+                    fixedTime = fixedTime.AddYears(1);
+                if (fixedTime > DateTime.Now)
+                {
+                    remindAt = fixedTime;
+                }
+                else
+                {
+                    // 实在修不好，才拒绝
+                    return "❌ 定在过去可不行，本座不会时光倒流之术";
+                }
+            }
+
+            string recurring = JsonRead(args, "recurring");
+            string priority = JsonRead(args, "priority");
+            if (string.IsNullOrEmpty(priority)) priority = "normal";
+
+            var mgr = ReminderManager.Instance;
+            if (mgr == null) return "❌ 卜算记事簿未就绪";
+
+            var r = mgr.AddReminder(text, remindAt,
+                string.IsNullOrEmpty(recurring) ? null : recurring,
+                priority, "ai");
+            return $"✅ 已记入卜算记事簿！提醒「{text}」定于 {remindAt:yyyy-MM-dd HH:mm}" +
+                   $"\n📌 ID: {r.id.Substring(0, 8)}… 可对我说「查提醒」查阅";
+        };
+
+        // ——— 18. 查阅记事：查询提醒 ———
+        _executors["query_reminders"] = args =>
+        {
+            var mgr = ReminderManager.Instance;
+            if (mgr == null) return "❌ 卜算记事簿未就绪";
+            return mgr.GetPendingText();
+        };
+
+        // ——— 19. 勾销事宜：标记完成 ———
+        _executors["mark_reminder_done"] = args =>
+        {
+            string id = JsonRead(args, "id");
+            if (string.IsNullOrEmpty(id)) return "❌ 未指定要勾销哪条提醒的 ID";
+
+            var mgr = ReminderManager.Instance;
+            if (mgr == null) return "❌ 卜算记事簿未就绪";
+
+            // 支持用前几位匹配（用户不一定记得完整 ID）
+            var all = mgr.GetAllReminders();
+            var match = all.Find(r => r.id.StartsWith(id) && !r.done);
+            if (match == null) return $"❌ 未找到 ID 以「{id}」开头的待办事项";
+
+            mgr.MarkDone(match.id);
+            return $"✅ 已勾销「{match.text}」";
+        };
+
+        // ——— 20. 销毁记事：删除提醒 ———
+        _executors["delete_reminder"] = args =>
+        {
+            string id = JsonRead(args, "id");
+            if (string.IsNullOrEmpty(id)) return "❌ 未指定要删除哪条提醒的 ID";
+
+            var mgr = ReminderManager.Instance;
+            if (mgr == null) return "❌ 卜算记事簿未就绪";
+
+            var all = mgr.GetAllReminders();
+            var match = all.Find(r => r.id.StartsWith(id));
+            if (match == null) return $"❌ 未找到 ID 以「{id}」开头的事项";
+
+            mgr.DeleteReminder(match.id);
+            return $"✅ 已销毁记事「{match.text}」";
+        };
     }
 
     // ================================================================
@@ -488,6 +580,62 @@ public class ToolCallInvoker : MonoBehaviour
         ""properties"": {
           ""path"": { ""type"": ""string"", ""description"": ""目录路径，为空则桌面"" }
         }
+      }
+    }
+  },
+  {
+    ""type"": ""function"",
+    ""function"": {
+      ""name"": ""set_reminder"",
+      ""description"": ""设置一个定时提醒/便签。在本座的卜算记事簿中记下一件事，到时辰会提醒你。支持每日/工作日/每周重复。用户说「提醒我xxx」「记一下xxx」「设个闹钟」时调用。"",
+      ""parameters"": {
+        ""type"": ""object"",
+        ""properties"": {
+          ""text"": { ""type"": ""string"", ""description"": ""提醒内容，如「下午3点开会」「买牛奶」"" },
+          ""remind_at"": { ""type"": ""string"", ""description"": ""提醒时间，ISO 格式如 2025-01-15 14:30，不提供则默认1小时后"" },
+          ""recurring"": { ""type"": ""string"", ""enum"": [""daily"", ""weekday"", ""weekly""], ""description"": ""重复类型：daily=每天 weekday=工作日 weekly=每周"" },
+          ""priority"": { ""type"": ""string"", ""enum"": [""low"", ""normal"", ""high""], ""description"": ""优先级"" }
+        },
+        ""required"": [""text""]
+      }
+    }
+  },
+  {
+    ""type"": ""function"",
+    ""function"": {
+      ""name"": ""query_reminders"",
+      ""description"": ""查询所有待办提醒/便签。用户说「看看我的提醒」「有什么待办」「查便签」时调用。返回未完成提醒列表。"",
+      ""parameters"": {
+        ""type"": ""object"",
+        ""properties"": {}
+      }
+    }
+  },
+  {
+    ""type"": ""function"",
+    ""function"": {
+      ""name"": ""mark_reminder_done"",
+      ""description"": ""将一条提醒标记为已完成。用户说「完成了」「搞定了」「勾掉」时调用。"",
+      ""parameters"": {
+        ""type"": ""object"",
+        ""properties"": {
+          ""id"": { ""type"": ""string"", ""description"": ""提醒的 ID（支持前几位模糊匹配）"" }
+        },
+        ""required"": [""id""]
+      }
+    }
+  },
+  {
+    ""type"": ""function"",
+    ""function"": {
+      ""name"": ""delete_reminder"",
+      ""description"": ""删除一条提醒。用户说「删除提醒」「不要这个了」时调用。"",
+      ""parameters"": {
+        ""type"": ""object"",
+        ""properties"": {
+          ""id"": { ""type"": ""string"", ""description"": ""提醒的 ID（支持前几位模糊匹配）"" }
+        },
+        ""required"": [""id""]
       }
     }
   }

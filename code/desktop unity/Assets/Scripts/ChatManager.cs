@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 using UnityEngine.Networking;
 using System.Collections;
@@ -22,7 +23,10 @@ public class ChatManager : MonoBehaviour
     // ==================================================================
     //  角色设定 — 符玄 + 法阵能力
     // ==================================================================
-    private const string SystemPrompt = @"你是符玄，仙舟「罗浮」太卜司之首。
+    private static string SystemPrompt => $@"你是符玄，仙舟「罗浮」太卜司之首。
+
+【当前时刻】
+你身处 {DateTime.Now:yyyy-MM-dd HH:mm}（主人电脑的本地时间）。用法阵术式填入时辰时，务必以此刻为准推算。
 
 【身份背景】
 你出身于玉阙仙舟观星士世家符氏，师从玉阙太卜竟天。为违逆师傅「命运将断绝在自己手中」的预言，你逃往罗浮太卜司。凭借第三眼与穷观阵为仙舟占算航路、预卜吉凶。你深信自己所做的一切便是事情的「最优解」，并一直等待将军景元兑现「退位让贤」的承诺——尽管这一天遥遥无期。
@@ -64,12 +68,19 @@ public class ChatManager : MonoBehaviour
 5. 洞观术 — 查看系统信息 / 看目录 / 看鼠标位置（get_system_info / list_files / get_mouse_pos）
 6. 调音术 — 调节音量 / 静音（set_volume / mute）
 7. 封印术 — 锁屏 / 关机 / 重启（lock_screen / power）
+8. 卜算记事簿 — 在本座的卜算记事簿中记下待办事项，到时辰会自动提醒主人。有此术式：
+   • set_reminder — 记录一条提醒（需告知内容和时辰，支持每日/工作日/每周重复）
+   • query_reminders — 查阅所有未完成的待办事项
+   • mark_reminder_done — 将一条提醒标记为已完成
+   • delete_reminder — 删除一条提醒
+   主人说「提醒我xxx」「记一下」「设个闹钟」「有什么待办」时，必须使用对应的术式(set_reminder/query_reminders)，不得只在回复中说「已记入」而不调用术式。若不用术式，记事簿中不会真的记下。切记：光说不施法等于没记。
 
-【法阵使用须知】
+【法阵使用须知 — 严格遵守】
 • 用法阵前先用卦象推演一番，再用术式
 • 执行后把结果用白话告诉主人
 • 不可以无故窥探主人隐私
-• 关机/重启/执行命令等重大事项需要主人亲口确认";
+• 关机/重启/执行命令等重大事项需要主人亲口确认
+• ⚠️ 核心铁则：凡是列表中有对应术式的功能（例如 set_reminder 记提醒、open_url 打开网页、search 搜索等），你必须调用对应的术式，绝不可以只在回复中说「已做某事」而不施法。如果不调用术式，术法不会自动生效，主人不会真的看到结果。宁可用错术式，不可只用嘴说。主人说「记一下」「提醒我」「帮我打开」「搜一下」等时，必须立刻调用对应的术式。";
 
     // ==================================================================
     //  数据模型
@@ -82,6 +93,8 @@ public class ChatManager : MonoBehaviour
         public string content;
         public string tool_call_id;  // tool 角色的回复 id
         public string name;          // tool 角色的函数名
+        [System.NonSerialized]
+        public string toolCallsJson; // assistant 消息的 tool_calls JSON（只在 role=assistant 时有意义）
     }
 
     // ==================================================================
@@ -215,19 +228,33 @@ public class ChatManager : MonoBehaviour
             // ——— 如果 AI 有文字回复 ———
             if (!string.IsNullOrEmpty(content))
             {
-                _history.Add(new Entry { role = "assistant", content = content });
                 _lastReply = content;
                 OnNewReply?.Invoke(content);
                 StartSentenceQueue(content);
             }
 
             // ——— 如果没有 tool_call，结束 ———
-            if (!hasToolCalls) yield break;
+            if (!hasToolCalls)
+            {
+                // 纯文字回复也要记入历史（不含 tool_calls）
+                if (!string.IsNullOrEmpty(content))
+                {
+                    _history.Add(new Entry { role = "assistant", content = content });
+                }
+                yield break;
+            }
+
+            // ——— AI 发了 tool_calls，将完整 assistant 消息（含 tool_calls）记入历史 ———
+            var assistantEntry = new Entry
+            {
+                role = "assistant",
+                content = content ?? "",
+                toolCallsJson = callsJson
+            };
+            _history.Add(assistantEntry);
 
             // ——— 解析并执行工具 ———
             var calls = ParseToolCalls(callsJson);
-
-            // 先把 assistant 的消息（带 tool_calls 的）加入历史
             _lastReply = content ?? "[施法中……]";
 
             foreach (var call in calls)
@@ -235,10 +262,14 @@ public class ChatManager : MonoBehaviour
                 // 通知外界
                 OnToolCalled?.Invoke(call.name);
 
+                Debug.Log($"[ChatManager] ⚡ 施法: {call.name}({call.arguments})");
+
                 // 执行
                 string result = toolInvoker
                     ? toolInvoker.Execute(call.name, call.arguments, out _)
                     : "法阵未就绪";
+
+                Debug.Log($"[ChatManager] 📜 结果: {result}");
 
                 OnToolResult?.Invoke(call.name, result);
 
@@ -428,6 +459,12 @@ public class ChatManager : MonoBehaviour
                 sb.Append("\",\"name\":\"");
                 sb.Append(EscapeJson(e.name ?? ""));
                 sb.Append("\"");
+            }
+            else if (e.role == "assistant" && !string.IsNullOrEmpty(e.toolCallsJson))
+            {
+                // assistant 消息带 tool_calls 时，原样发回
+                sb.Append(",\"tool_calls\":");
+                sb.Append(e.toolCallsJson);
             }
 
             sb.Append(",\"content\":\"");

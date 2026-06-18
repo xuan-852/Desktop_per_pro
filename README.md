@@ -15,7 +15,9 @@
 ### 🎮 交互
 - **拖拽移动** — 按住任意位置拖拽，角色会挣扎划水 + 衣服/头发物理摆动
 - **分区点击反馈** — 点击头部/身体/腿部有不同反应（歪头戳脸/害羞捂胸/踢腿）
-- **右键菜单** — 暂停、调试、关闭等操作
+- **右键菜单** — 设置、动作、聊天、便签四标签面板
+- **AI 对话** — 底部输入框 + DeepSeek Function Calling，可调用 20+ 工具
+- **点击穿透** — 鼠标在宠物上可交互，在宠物外直接穿透到桌面，无需拖拽"激活"
 
 ### 🎭 动画
 - **自然待机** — Perlin 噪声驱动的呼吸、身体微晃、眼球微动
@@ -32,13 +34,27 @@
   - ❄️ 下雪 → 好奇张嘴睁大眼
 - **待机气泡** — 30 秒无交互后头顶冒泡，内容根据时间/天气变化（"早安~""打雷了好可怕！""好晚了该睡了~"）
 
+### 🤖 AI 聊天
+- **DeepSeek API** — 集成 DeepSeek Chat + Function Calling，最多 5 轮工具调用循环
+- **20+ 工具** — 打开网页、搜索、截图、调音量、记便签、查天气等
+- **自动闲聊** — 无操作一段时间后角色主动搭话
+- **句子队列** — 长回复逐句显示，打字机效果
+
+### 📋 便签提醒
+- **增删改查** — 本地 JSON 持久化，支持每日/工作日/每周重复
+- **到期提醒** — 头顶气泡 + Windows Toast 通知
+- **手机推送** — 通过 Server酱³ 推送到手机 App
+- **AI 驱动** — 聊天时直接说"提醒我下午3点买菜"，AI 自动调用工具
+
 ### 🏃 物理
 - **CubismPhysics** — 衣服/头发/裙子/配饰自然物理摆动
 - **直接驱动** — 拖拽时帧间速度实时输入物理系统，裙子/法盘/头发惯性跟随
 - **头发驱动** — 20 个输出参数全部物理绕过，实现飘逸效果
 
 ### 🖥 技术特性
-- **透明窗口** — Win32 API 实现 Unity 窗口穿透 + 镂空，鼠标事件正确传递
+- **透明窗口** — Win32 API（DWM + WS_EX_LAYERED）实现 Unity 窗口穿透 + 镂空
+- **点击穿透** — 每帧动态管理 WS_EX_TRANSPARENT，宠物内交互、宠物外穿透
+- **系统托盘** — Shell_NotifyIcon 最小化到通知区域，支持开机自启
 - **底部输入栏** — 内置 AI 聊天输入框 + 角色预设提示词
 - **调试窗口** — 实时调参面板
 - **编码优化** — 默认 GBK 编码兼容中文
@@ -57,16 +73,18 @@ Desktop_per_pro/
 │   │   │   ├── DragHandler.cs        # 拖拽/点击交互
 │   │   │   ├── TimeWeatherController.cs  # 昼夜/天气
 │   │   │   ├── ChatBubble.cs         # 头顶气泡
-│   │   │   ├── ChatManager.cs        # AI 对话管理
+│   │   │   ├── ChatManager.cs        # AI 对话 + Function Calling
 │   │   │   ├── AutoChat.cs           # 自动闲聊
 │   │   │   ├── BottomInputBar.cs     # 底部输入栏
-│   │   │   ├── ContextMenu.cs        # 右键菜单
+│   │   │   ├── ContextMenu.cs        # 右键菜单（设置/动作/聊天/便签）
+│   │   │   ├── ReminderManager.cs    # 便签提醒 + Server酱³ 推送
+│   │   │   ├── SystemTrayManager.cs  # 系统托盘图标
 │   │   │   ├── DebugWindow.cs        # 调试调参面板
-│   │   │   ├── WindowOverlay.cs      # 透明窗口管理
+│   │   │   ├── WindowOverlay.cs      # 透明窗口（DWM + WS_EX_LAYERED）
 │   │   │   ├── IPetRenderer.cs       # 渲染接口
 │   │   │   ├── HybridRenderer.cs     # 混合渲染器
 │   │   │   ├── Model3DRenderer.cs    # 3D 渲染器
-│   │   │   └── ToolCallInvoker.cs    # AI 工具调用
+│   │   │   └── ToolCallInvoker.cs    # AI 工具调用分发
 │   │   ├── Live2D/Models/Fuxuan/     ← 符玄 Live2D 模型
 │   │   ├── Scenes/scene.scene        # 主场景
 │   │   └── Resources/                # 资源文件夹
