@@ -21,7 +21,7 @@
 
 ### 🎭 动画
 - **自然待机** — Perlin 噪声驱动的呼吸、身体微晃、眼球微动
-- **11 种空闲动作** — 歪头卖萌、微笑眯眼、挑眉、星辉环绕、伸懒腰、爱心眨眼、数钱、委屈、法阵展开、害羞黑脸、困惑歪头
+- **11 种空闲动作** — 歪头卖萌、微笑眯眼、挑眉、星辉环绕、伸懒腰、爱心眨眼、数钱、委屈、法阵展开、害羞黑脸、困惑歪头（动作还不够自然，仍需调整）
 - **走路动画** — 横版走路 + 身体颠簸 + 无缝空闲过渡
 - **眨眼** — 自动随机眨眼
 - **鼠标跟随** — 眼球平滑追踪鼠标位置
@@ -85,9 +85,14 @@ Desktop_per_pro/
 │   │   │   ├── HybridRenderer.cs     # 混合渲染器
 │   │   │   ├── Model3DRenderer.cs    # 3D 渲染器
 │   │   │   └── ToolCallInvoker.cs    # AI 工具调用分发
+│   │   ├── Animations/               # 3D 模型动画
+│   │   ├── Editor/                   # 构建脚本
 │   │   ├── Live2D/Models/Fuxuan/     ← 符玄 Live2D 模型
-│   │   ├── Scenes/scene.scene        # 主场景
-│   │   └── Resources/                # 资源文件夹
+│   │   ├── Models/Fuxuan/            # 3D FBX 模型
+│   │   ├── Prefabs/                  # 预制体
+│   │   ├── Scenes/SampleScene.scene  # 主场景
+│   │   ├── StreamingAssets/          # 流式资源
+│   │   └── Resources/                # 运行时加载资源
 │   ├── Packages/
 │   │   └── manifest.json             # 依赖管理
 │   └── ProjectSettings/              # Unity 项目设置
@@ -100,13 +105,15 @@ Desktop_per_pro/
 
 ```
 DesktopPet (主控制器, Update order=0)
-├── DragHandler          ← 鼠标交互
+├── DragHandler          ← 鼠标交互 / 点击穿透
 ├── ChatBubble           ← 头顶气泡
-├── ChatManager          ← AI 对话
+├── ChatManager          ← AI 对话 + Function Calling
 ├── AutoChat             ← 自动闲聊
 ├── BottomInputBar       ← 底部输入栏
 ├── ContextMenu          ← 右键菜单
 ├── TimeWeatherController ← 时间/天气
+├── ReminderManager      ← 便签提醒 + Server酱³ 推送
+├── SystemTrayManager    ← 系统托盘图标
 ├── DebugWindow          ← 调试面板
 ├── WindowOverlay        ← 透明窗口
 └── Live2DRenderer (IPetRenderer, Update order=801)
@@ -143,7 +150,7 @@ DesktopPet (主控制器, Update order=0)
    - 将 符玄 Live2D 模型文件放到 `Assets/Live2D/Models/Fuxuan/` 目录下
    - Cubism SDK 会自动生成 Prefab
 
-4. **在 Unity 中打开场景** `Assets/Scenes/scene.scene`
+4. **在 Unity 中打开场景** `Assets/Scenes/SampleScene.scene`
    - 检查 `DesktopPet` 对象的 Inspector 中 `Live2DRenderer.modelPrefab` 是否已引用
 
 5. **运行** → 点击 Play
