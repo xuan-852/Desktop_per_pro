@@ -7,7 +7,7 @@ using UnityEngine;
 /// </summary>
 public class BottomInputBar : MonoBehaviour
 {
-    // ===== 固定坐标（‼️ 不要改动 ‼️ left=265 right=635 top=1528 bottom=1600） =====
+    // ===== 固定坐标（测试最优值） =====
     private const float BAR_LEFT = 265f;
     private const float BAR_RIGHT = 635f;
     private const float BAR_TOP = 1528f;
@@ -41,6 +41,10 @@ public class BottomInputBar : MonoBehaviour
     // ===== 公共属性 =====
 
     public bool IsMouseOverBar { get; private set; } = false;
+
+    // 底部半透明遮罩 — 挡住拖动窗口钻入输入框与任务栏之间
+    private Texture2D _shadowTex;
+    private GUIStyle _shadowStyle;
 
     void Start()
     {
@@ -91,6 +95,10 @@ public class BottomInputBar : MonoBehaviour
         _bgTex = MakeTex(1, 1, new Color(1f, 1f, 1f, 0.92f));                // 白底
         _inputBgTex = MakeTex(1, 1, new Color(0.85f, 0.85f, 0.88f, 0.6f));  // 浅灰输入框底
 
+        // 半透明遮罩 — 防止窗口钻入输入框与任务栏之间，又不会完全挡住普通窗口
+        _shadowTex = MakeTex(1, 1, new Color(0f, 0f, 0f, 0.15f));
+        _shadowStyle = new GUIStyle { normal = { background = _shadowTex } };
+
         _barBgStyle = new GUIStyle
         {
             normal = { background = _bgTex },
@@ -112,13 +120,22 @@ public class BottomInputBar : MonoBehaviour
         float y = BarTop;
         float w = BarW;
         float h = BarH;
+        float screenH = Screen.height;
 
-        // ——— 白底圆角区域 ———
+        // ——— 白色输入框区域 ———
         Rect barRect = new Rect(BarLeft, y, w, h);
         GUI.Box(barRect, GUIContent.none, _barBgStyle);
 
         // ——— 顶部细阴影线（浅灰） ———
         DrawLine((int)BarLeft, (int)y, (int)(BarLeft + w), (int)y, new Color(0.80f, 0.80f, 0.82f, _alpha * 0.8f));
+
+        // ——— 半透明遮罩延伸到屏幕底部 ———
+        // 防止拖动窗口钻入输入框与任务栏之间，又能让普通窗口隐约可见
+        if (BarBottom < screenH)
+        {
+            Rect shadowRect = new Rect(BarLeft, BarBottom, w, screenH - BarBottom);
+            GUI.Box(shadowRect, GUIContent.none, _shadowStyle);
+        }
 
         float padL = 14f;
         float padR = 14f;

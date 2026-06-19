@@ -3,10 +3,12 @@
 ![Unity](https://img.shields.io/badge/Unity-2022.3.62_LTS-000000?logo=unity)
 ![Live2D](https://img.shields.io/badge/Live2D-Cubism_5--r.4-FF6B9D)
 ![C#](https://img.shields.io/badge/C%23-512BD4?logo=csharp)
+![DeepSeek](https://img.shields.io/badge/DeepSeek-Function_Calling-4F46E5)
+![Platform](https://img.shields.io/badge/Platform-Windows_10%2F11-00A4EF?logo=windows)
 
 将 **崩坏：星穹铁道 — 符玄** 作为 Live2D 桌面宠物，在 Windows 桌面上陪伴你。
 
-利用 Unity 透明窗口 + Live2D Cubism SDK 渲染，结合物理模拟、交互反馈、昼夜/天气响应，营造生动的桌面伙伴体验。
+利用 Unity 透明窗口 + Live2D Cubism SDK 渲染，结合物理模拟、交互反馈、昼夜/天气响应、AI 对话、微信小程序数据打通，营造生动的桌面伙伴体验。
 
 ---
 
@@ -16,15 +18,17 @@
 - **拖拽移动** — 按住任意位置拖拽，角色会挣扎划水 + 衣服/头发物理摆动
 - **分区点击反馈** — 点击头部/身体/腿部有不同反应（歪头戳脸/害羞捂胸/踢腿）
 - **右键菜单** — 设置、动作、聊天、便签四标签面板
-- **AI 对话** — 底部输入框 + DeepSeek Function Calling，可调用 20+ 工具
+- **AI 对话** — 底部输入框 + DeepSeek Function Calling，可调用 24+ 工具
 - **点击穿透** — 鼠标在宠物上可交互，在宠物外直接穿透到桌面，无需拖拽"激活"
+- **开机自启** — 系统托盘一键设置开机自启
 
 ### 🎭 动画
 - **自然待机** — Perlin 噪声驱动的呼吸、身体微晃、眼球微动
-- **11 种空闲动作** — 歪头卖萌、微笑眯眼、挑眉、星辉环绕、伸懒腰、爱心眨眼、数钱、委屈、法阵展开、害羞黑脸、困惑歪头（动作还不够自然，仍需调整）
+- **11 种空闲动作** — 歪头卖萌、微笑眯眼、挑眉、星辉环绕、伸懒腰、爱心眨眼、数钱、委屈、法阵展开、害羞黑脸、困惑歪头
 - **走路动画** — 横版走路 + 身体颠簸 + 无缝空闲过渡
 - **眨眼** — 自动随机眨眼
 - **鼠标跟随** — 眼球平滑追踪鼠标位置
+- **FPS 自适应** — 性能低时自动降低动画频率
 
 ### 🌤 时间/天气响应
 - **昼夜感知** — 读取系统时间，夜晚眼皮微垂、犯困动作增多
@@ -32,19 +36,22 @@
   - ☀️ 晴/多云 → 自然微笑
   - 🌧 阴雨/雷雨 → 委屈表情 + 皱眉
   - ❄️ 下雪 → 好奇张嘴睁大眼
-- **待机气泡** — 30 秒无交互后头顶冒泡，内容根据时间/天气变化（"早安~""打雷了好可怕！""好晚了该睡了~"）
+- **待机气泡** — 无交互后头顶冒泡，内容根据时间/天气变化
 
 ### 🤖 AI 聊天
 - **DeepSeek API** — 集成 DeepSeek Chat + Function Calling，最多 5 轮工具调用循环
-- **20+ 工具** — 打开网页、搜索、截图、调音量、记便签、查天气等
+- **24+ 工具** — 打开网页、搜索、截图、调音量、记便签、查天气、查成绩、查课表、查考试等
+- **小程序数据互通** — 连接微信课表小程序服务端，实时查询学业数据
 - **自动闲聊** — 无操作一段时间后角色主动搭话
 - **句子队列** — 长回复逐句显示，打字机效果
+- **优先级气泡** — AI 回复高优显示，不被闲话问候覆盖
 
 ### 📋 便签提醒
 - **增删改查** — 本地 JSON 持久化，支持每日/工作日/每周重复
 - **到期提醒** — 头顶气泡 + Windows Toast 通知
 - **手机推送** — 通过 Server酱³ 推送到手机 App
 - **AI 驱动** — 聊天时直接说"提醒我下午3点买菜"，AI 自动调用工具
+- **服务端同步** — 小程序服务端统一维护提醒队列
 
 ### 🏃 物理
 - **CubismPhysics** — 衣服/头发/裙子/配饰自然物理摆动
@@ -52,12 +59,13 @@
 - **头发驱动** — 20 个输出参数全部物理绕过，实现飘逸效果
 
 ### 🖥 技术特性
-- **透明窗口** — Win32 API（DWM + WS_EX_LAYERED）实现 Unity 窗口穿透 + 镂空
+- **透明窗口** — Win32 API（DWM DwmExtendFrameIntoClientArea）实现 Unity 窗口穿透 + 镂空，无绿边
 - **点击穿透** — 每帧动态管理 WS_EX_TRANSPARENT，宠物内交互、宠物外穿透
 - **系统托盘** — Shell_NotifyIcon 最小化到通知区域，支持开机自启
-- **底部输入栏** — 内置 AI 聊天输入框 + 角色预设提示词
-- **调试窗口** — 实时调参面板
+- **底部输入栏** — 内置 AI 聊天输入框 + Windows 搜索风格
+- **调试窗口** — 实时调参面板（FPS/CPU/内存监控）
 - **编码优化** — 默认 GBK 编码兼容中文
+- **性能监控** — FPS/CPU/内存实时监控，低帧率自动调节
 
 ---
 
@@ -72,19 +80,21 @@ Desktop_per_pro/
 │   │   │   ├── Live2DRenderer.cs     # Live2D 渲染 + 动画 + 物理驱动
 │   │   │   ├── DragHandler.cs        # 拖拽/点击交互
 │   │   │   ├── TimeWeatherController.cs  # 昼夜/天气
-│   │   │   ├── ChatBubble.cs         # 头顶气泡
+│   │   │   ├── ChatBubble.cs         # 头顶气泡（含优先级系统）
 │   │   │   ├── ChatManager.cs        # AI 对话 + Function Calling
 │   │   │   ├── AutoChat.cs           # 自动闲聊
 │   │   │   ├── BottomInputBar.cs     # 底部输入栏
 │   │   │   ├── ContextMenu.cs        # 右键菜单（设置/动作/聊天/便签）
 │   │   │   ├── ReminderManager.cs    # 便签提醒 + Server酱³ 推送
+│   │   │   ├── ServerPollService.cs  # 服务端推送轮询 + 数据查询
+│   │   │   ├── PerformanceMonitor.cs # FPS/CPU/内存监控
 │   │   │   ├── SystemTrayManager.cs  # 系统托盘图标
 │   │   │   ├── DebugWindow.cs        # 调试调参面板
-│   │   │   ├── WindowOverlay.cs      # 透明窗口（DWM + WS_EX_LAYERED）
+│   │   │   ├── WindowOverlay.cs      # 透明窗口（DWM DwmExtendFrameIntoClientArea）
 │   │   │   ├── IPetRenderer.cs       # 渲染接口
 │   │   │   ├── HybridRenderer.cs     # 混合渲染器
 │   │   │   ├── Model3DRenderer.cs    # 3D 渲染器
-│   │   │   └── ToolCallInvoker.cs    # AI 工具调用分发
+│   │   │   └── ToolCallInvoker.cs    # AI 工具调用分发（24+ 工具）
 │   │   ├── Animations/               # 3D 模型动画
 │   │   ├── Editor/                   # 构建脚本
 │   │   ├── Live2D/Models/Fuxuan/     ← 符玄 Live2D 模型
@@ -106,16 +116,18 @@ Desktop_per_pro/
 ```
 DesktopPet (主控制器, Update order=0)
 ├── DragHandler          ← 鼠标交互 / 点击穿透
-├── ChatBubble           ← 头顶气泡
-├── ChatManager          ← AI 对话 + Function Calling
-├── AutoChat             ← 自动闲聊
+├── ChatBubble           ← 头顶气泡（含优先级系统）
+├── ChatManager          ← AI 对话 + Function Calling + 逐句队列
+├── AutoChat             ← 自动闲聊 + 问候库
 ├── BottomInputBar       ← 底部输入栏
 ├── ContextMenu          ← 右键菜单
 ├── TimeWeatherController ← 时间/天气
 ├── ReminderManager      ← 便签提醒 + Server酱³ 推送
+├── ServerPollService    ← 服务端轮询 + 小程序数据查询
+├── PerformanceMonitor   ← FPS/CPU/内存监控
 ├── SystemTrayManager    ← 系统托盘图标
 ├── DebugWindow          ← 调试面板
-├── WindowOverlay        ← 透明窗口
+├── WindowOverlay        ← 透明窗口（DWM 玻璃层）
 └── Live2DRenderer (IPetRenderer, Update order=801)
     └── CubismPhysicsController (order=800) ← 物理
 ```
@@ -174,3 +186,78 @@ DesktopPet (主控制器, Update order=0)
 - [Unity 透明窗口实现](https://github.com/XJINE/Unity_TransparentWindowManager)
 - 原 GDI+ 桌宠项目：`D:\C\Desktop pet\`
 - 流萤 Live2D 模型来源：[B站@是依七哒](https://space.bilibili.com/457683484) / [Scighost/Firefly](https://github.com/Scighost/Firefly)
+
+## ⚠️ 已知问题
+
+### 1. 窗口 Z 顺序问题
+
+**现象：** 拖动任意普通窗口（如 Edge、文件资源管理器）时，窗口会出现在底部输入栏与任务栏之间的透明间隙中。效果上违背了 `[任务栏] → [输入框] → [窗口] → [宠物]` 的期望层级。
+
+**原因：** Unity 窗口为全屏 TOPMOST（保证宠物永远在顶层），所有非 TOPMOST 的普通窗口都渲染在 Unity 窗口之下。任务管理器等自带 TOPMOST 属性的窗口不受影响。
+
+**尝试过的方案：**
+- `SPI_GETWORKAREA` 限制窗口到工作区 → 宠物被任务栏遮挡
+- 白底背景延伸到屏幕底部 → Edge 等窗口被白底"切断"，视觉更差
+- 半透明遮罩延伸到屏幕底部 → 仅缓解，未从根本上解决问题
+
+**根本矛盾：** 全屏 TOPMOST 窗口无法同时满足"普通窗口在宠物之上"和"宠物在任务栏之上"。需引入更精细的窗口管理策略（如动态调整窗口大小/位置、多窗口分层渲染、或 Hook 窗口 Z 顺序事件）方可解决。
+
+**状态：** ⏳ 待后续研究
+
+### 2. 空闲动作不够自然
+
+**现象：** 部分空闲动作（尤其是过渡衔接时）生硬不自然，整体流畅度仍有提升空间。
+
+**原因：** 当前动作系统为纯参数插值（缓入缓出曲线），缺少对 Live2D 模型自身 BlendShape 混合的精细控制。动作切换时的参数冲突（如前一个动作的参数尚未完全归零，新动作已经开始叠加）导致视觉上的"跳变"感。
+
+**涉及动作：** 歪头、微笑、挑眉、星辉、伸懒腰、爱心眼、数钱、委屈、法阵、害羞、困惑共 11 种。
+
+**状态：** 🔧 持续调整中
+
+### 3. 视觉特效已移除
+
+**现象：** 动作 4（星辉环绕）和动作 9（法阵显现）的视觉特效（紫环旋转、黑幕、眼镜发光、星星闪烁、七星盘、白圈）已被移除，仅保留动作时长和空壳函数。动作 7（数钱）的"双眼放光"参数也可能受影响。
+
+**原因：** 过渡到 DWM 黑色透明方案后，半透明特效像素与黑色背景不兼容。在 RGBA 渲染中，半透明特效像素与黑色 (0,0,0) 背景混合后会变暗或消失，无法正确显示。
+
+**影响范围：**
+- 动作 4（星辉）：紫环旋转、黑幕、眼镜发光、星星闪烁 → 全部移除
+- 动作 9（法阵）：黑幕、白圈、七星盘、眼镜发光、镜头缩放 → 全部移除，仅保留五阶段手势变化
+- 动作 7（数钱）：Param121/137/132 双眼放光 → 显示效果受限
+
+**解决方向：** 需要实现独立的半透明叠加层渲染（不依赖 Unity 主窗口的黑色透明），或在 DWM 外部另建一个半透明覆盖窗口来渲染特效。
+
+**状态：** ⏳ 待后续研究
+
+### 4. 3D 渲染器未实现
+
+**现象：** `Model3DRenderer.cs` 已挂载但处于 disabled 状态，3D 渲染通路仅有接口骨架，无法实际使用。
+
+**背景：** 项目中设计了 `IPetRenderer` 接口和 `HybridRenderer` 混合渲染器，意图在 Live2D（精细表情）和 3D（走路/飞行动画）之间切换。当前仅 Live2D 渲染器活跃，所有走路/飞行状态也由 Live2D 模拟完成。
+
+**影响：**
+- `HybridRenderer` 的渲染模式 2（强制 3D）不可用
+- 走路/飞行动画无法使用 3D 骨骼动画
+- `Model3DRenderer` 的背景同样设为黑色以跟随 DWM 透明方案，但无实际渲染内容
+
+**状态：** ⏳ 待后续实现
+
+### 5. 困惑动作（11 号）权重为 0
+
+**现象：** 困惑（Confused）动作在空闲动作循环中权重为 0，永远不会自发触发。
+
+**原因：** 代码中 `_idleActionWeights` 数组的第 11 个元素值为 `0`。有趣的是，LaTeX 文档（`project_brief/report.tex`）的动作权重表中记录困惑权重为 `2`（占 6.5%），与代码实际值不符。困惑动作被设计为仅由外部强制调用（如 AI 对话中角色表达困惑时调用），而非自然空闲循环的一部分。
+
+**影响：** 用户在普通使用中永远看不到歪头 + 皱眉 + 眯眼的困惑表情，除非通过 AI 聊天或调试面板强制触发。
+
+**状态：** 🔧 可按需调整权重使其自然出现（同时需同步更新 LaTeX 文档）
+
+### 6. LaTeX 文档末尾有杂散代码
+
+**现象：** `project_brief/report.tex` 中，在 `\end{document}` 之后存在一段 `TouchController.cs` 骨架代码（约 30 行），属于误粘贴的杂散内容，不应出现在文档中。
+
+**具体内容：** 一个 `TouchController : MonoBehaviour` 类的完整骨架，包含 `Start()`、`OnMouseDown()` 方法和 `reactionDuration` 等字段。
+
+**影响：** 虽然不影响 PDF 编译（LaTeX 会忽略 `\end{document}` 之后的内容），但影响代码文档的整洁性，且该组件在实际项目中已被 `DragHandler.cs` 替代。
+
+**状态：** ✅ 可在下次编辑 LaTeX 时直接删除

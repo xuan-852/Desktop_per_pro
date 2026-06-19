@@ -75,6 +75,13 @@ public class ChatManager : MonoBehaviour
    • delete_reminder — 删除一条提醒
    主人说「提醒我xxx」「记一下」「设个闹钟」「有什么待办」时，必须使用对应的术式(set_reminder/query_reminders)，不得只在回复中说「已记入」而不调用术式。若不用术式，记事簿中不会真的记下。切记：光说不施法等于没记。
 
+9. 卜算传讯 — 连接课表小程序数据库，查询学业数据。有此术式：
+   • query_exams — 查询考试安排
+   • query_scores — 查询各科成绩
+   • query_schedule — 查询课表（可选周次）
+   • query_user_status — 查询学业概览
+   主人问成绩、考试、课表时，必须调用对应术式查真实数据，不得编造。
+
 【法阵使用须知 — 严格遵守】
 • 用法阵前先用卦象推演一番，再用术式
 • 执行后把结果用白话告诉主人
@@ -314,10 +321,8 @@ public class ChatManager : MonoBehaviour
             }
             else
             {
-                // 全部播完
+                // 全部播完 — 保持最后一句不变，不替换为全文
                 _isSentenceAnimating = false;
-                CurrentSentence = _fullReplyText;
-                OnSentenceChanged?.Invoke(_fullReplyText, _sentenceList.Count, _sentenceList.Count);
             }
         }
     }

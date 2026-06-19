@@ -4,9 +4,24 @@ using UnityEngine;
 /// 聊天气泡 — 在模型上方显示浮动的 AI 对话气泡
 /// OnGUI 绘制，圆角 + 小尾巴 + 淡入淡出动画
 /// 参考 Live2DPet (Electron/HTML) 设计风格
+///
+/// ⚠️ 优先级系统（防抢话）：
+///   High   = AI 主动回复（不可被低优先级覆盖）
+///   Normal = 提醒、交互回应
+///   Low    = 闲话、定时问候
+/// 高优先级消息显示期间，低优先级消息会被忽略；
+/// 同优先级消息总是可以覆盖当前消息。
 /// </summary>
 public class ChatBubble : MonoBehaviour
 {
+    /// <summary>消息优先级（数字越大越优先）</summary>
+    public enum MsgPriority
+    {
+        Low = 0,     // 闲话、定时问候
+        Normal = 1,  // 提醒、交互回应
+        High = 2     // AI 回复（不可被低优覆盖）
+    }
+
     [Header("显示设置")]
     public float displayDuration = 5f;
     public float fadeInDuration = 0.3f;
@@ -27,6 +42,12 @@ public class ChatBubble : MonoBehaviour
     public Color accentColor = new Color(0.72f, 0.48f, 0.84f);     // 紫色装饰线
     public Color textColor = new Color(0.95f, 0.92f, 0.97f);       // 浅紫白文字
     public Color shadowColor = new Color(0f, 0f, 0f, 0.25f);
+
+    // ============ 优先级系统 ============
+    /// <summary>当前显示消息的优先级</summary>
+    private MsgPriority _currentPriority = MsgPriority.Low;
+    /// <summary>外部可查：当前是否在高优先级的 AI 回复中（供其他模块判断）</summary>
+    public bool IsShowingHighPriority => _hasMessage && _currentPriority >= MsgPriority.High;
 
     private DesktopPet _pet;
     private Live2DRenderer _renderer;
@@ -66,16 +87,50 @@ public class ChatBubble : MonoBehaviour
     //  公开接口
     // ============================================================
 
-    /// <summary>显示一条消息（自动淡出）</summary>
+    /// <summary>显示一条消息（优先级 Normal）。如果当前有高优先级消息则忽略。</summary>
     public void ShowMessage(string text, float duration = 5f)
     {
+        ShowMessage(text, duration, MsgPriority.Normal);
+    }
+
+    /// <summary>显示一条消息（指定优先级）。高优消息不会被低优覆盖。</summary>
+    public void ShowMessage(string text, float duration, MsgPriority priority)
+    {
+        // 低优先级消息不能覆盖高优先级
+        if (_hasMessage && priority < _currentPriority)
+            return;
+
         _currentText = text;
         displayDuration = duration;
         _messageStartTime = Time.time;
         _hasMessage = true;
         _state = BubbleState.FadingIn;
         _animProgress = 0f;
+        _currentPriority = priority;
         _needsRebuild = true;
+    }
+
+    /// <summary>仅更新文本和时长（不重置淡入动画）— 用于逐句切换</summary>
+    public void UpdateText(string text, float duration = 0f)
+    {
+        _currentText = text;
+        if (duration > 0f)
+        {
+            // 延长剩余显示时间
+            _messageStartTime = Time.time;
+            displayDuration = duration;
+        }
+        _needsRebuild = true;
+    }
+
+    /// <summary>延长当前消息的显示时间（用于长回复逐句播放）</summary>
+    public void ExtendDuration(float extraSeconds)
+    {
+        if (_hasMessage)
+        {
+            _messageStartTime = Time.time;
+            displayDuration = extraSeconds;
+        }
     }
 
     /// <summary>立即隐藏气泡</summary>

@@ -109,7 +109,12 @@
     \item 拖拽挣扎动画（双臂交替划水 + 双腿交替 + 身体扭动 + 表情）
     \item 头发/裙子/法盘直接物理驱动（拖拽速度实时输入 CubismPhysics）
     \item 时间/天气响应系统（昼夜犯困眼皮 + 天气表情基调 + 待机气泡）
-    \item AI 对话 + 自动闲聊 + 底部输入栏
+    \item AI 对话 + 自动闲聊 + 底部输入栏（DeepSeek Function Calling，24+ 工具）
+    \item 气泡优先级系统（High/Normal/Low，防止 AI 回复被问候覆盖）
+    \item 服务端推送轮询（定时查询 Node.js 推送队列）
+    \item 微信小程序数据打通（成绩/课表/考试/学业概览实时查询）
+    \item 性能监控（FPS/CPU/内存 + 自适应降频）
+    \item 开机自启（系统托盘一键设置）
     \item 调试窗口实时调参
     \item 3D 模型渲染管线预留（HybridRenderer 双渲染器交叉淡入淡出）
 \end{itemize}
@@ -750,6 +755,151 @@ public interface IPetRenderer
 \end{lstlisting}
 
 % ═══════════════════════════════════════════
+\section{服务端轮询与数据查询 (ServerPollService)}
+% ═══════════════════════════════════════════
+
+\subsection{概述}
+
+\texttt{ServerPollService} 负责与微信课表小程序的后端 Node.js 服务通信，实现：
+\begin{itemize}
+    \item \textbf{推送轮询} — 定期查询服务端推送队列，消费提醒/通知
+    \item \textbf{数据查询} — 供 AI 模块调用，实时查询学业数据（成绩、课表、考试）
+    \item \textbf{开机通知} — 宠物启动时向服务端发送开机事件
+\end{itemize}
+
+\subsection{API 端点}
+
+通过 HTTP GET 请求 Node.js 服务（\texttt{localhost:3000}），使用 DESKTOP\_TOKEN 鉴权：
+
+\begin{table}[H]
+\centering
+\caption{ServerPollService API 端点}
+\label{tab:poll-api}
+\begin{tabular}{lll}
+\toprule
+\textbf{端点} & \textbf{方法} & \textbf{功能} \\
+\midrule
+\texttt{/api/pet/poll} & GET & 获取推送队列 \\
+\texttt{/api/pet/heartbeat} & GET & 开机心跳通知 \\
+\texttt{/api/pet/scores} & GET & 查询全部成绩 \\
+\texttt{/api/pet/schedule} & GET (+week=N) & 查询课表 \\
+\texttt{/api/pet/exams} & GET & 查询考试安排 \\
+\texttt{/api/pet/user/status} & GET & 学业概览 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{轮询机制}
+
+\begin{itemize}
+    \item 启动 5 秒后开始首次轮询
+    \item 间隔 10 秒自动查询
+    \item 每批最多消费 10 条推送（防积压）
+    \item 网络错误自动重试，不影响主循环
+\end{itemize}
+
+\subsection{与 AI 集成}
+
+AI 模块通过 \texttt{ToolCallInvoker} 注册了 4 个数据查询术式：
+
+\begin{table}[H]
+\centering
+\caption{AI 数据查询工具}
+\label{tab:ai-data-tools}
+\begin{tabular}{lll}
+\toprule
+\textbf{术式名称} & \textbf{API 端点} & \textbf{用途} \\
+\midrule
+\texttt{query\_scores} & \texttt{/api/pet/scores} & 成绩查询 \\
+\texttt{query\_schedule} & \texttt{/api/pet/schedule} & 课表查询 \\
+\texttt{query\_exams} & \texttt{/api/pet/exams} & 考试查询 \\
+\texttt{query\_user\_status} & \texttt{/api/pet/user/status} & 学业概览 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+聊天时 AI 自动判断需要调用的术式，从服务端获取真实数据后以白话回复用户。
+
+% ═══════════════════════════════════════════
+\section{性能监控 (PerformanceMonitor)}
+% ═══════════════════════════════════════════
+
+\subsection{概述}
+
+\texttt{PerformanceMonitor} 提供对桌面宠物运行性能的实时监控。基于 \texttt{System.Diagnostics.PerformanceCounter} 实现，不依赖第三方库。
+
+\subsection{监控指标}
+
+\begin{table}[H]
+\centering
+\caption{性能监控指标}
+\label{tab:perf-metrics}
+\begin{tabular}{llc}
+\toprule
+\textbf{指标} & \textbf{方式} & \textbf{采样间隔} \\
+\midrule
+FPS & Time.deltaTime 滑动平均 & 每帧 \\
+CPU 使用率 & PerformanceCounter("Processor", "\% Processor Time", "\_Total") & 1 秒 \\
+内存使用量 & PerformanceCounter("Process", "Working Set") & 1 秒 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{自适应降频}
+
+当 FPS 持续低于阈值（默认 30）时，\texttt{PerformanceMonitor} 可通过事件通知 \texttt{Live2DRenderer}：
+\begin{itemize}
+    \item 减少 Perlin 噪声微动频率
+    \item 降低空闲动作切换频次
+    \item 减少待机气泡触发
+\end{itemize}
+
+\subsection{调试面板}
+
+数据通过 \texttt{DebugWindow} 以 OnGUI 形式实时显示，包括：
+\begin{itemize}
+    \item 当前 FPS（带颜色指示：绿色 $\ge$ 55、黄色 30-55、红色 $<$ 30）
+    \item CPU 使用率百分比
+    \item 工作集内存占用量（MB）
+\end{itemize}
+
+% ═══════════════════════════════════════════
+\section{气泡优先级系统 (ChatBubble)}
+% ═══════════════════════════════════════════
+
+\subsection{设计动机}
+
+AI 回复过程中，自动闲聊系统可能因定时器触发而弹出低优先级问候气泡，
+覆盖正在显示的 AI 回复内容。优先级系统确保重要消息不被中断。
+
+\subsection{优先级级别}
+
+\begin{table}[H]
+\centering
+\caption{消息优先级}
+\label{tab:msg-priority}
+\begin{tabular}{lll}
+\toprule
+\textbf{级别} & \textbf{数值} & \textbf{适用场景} \\
+\midrule
+Low    & 0 & 闲话、定时问候、待机气泡 \\
+Normal & 1 & 提醒、交互回应（戳/摸） \\
+High   & 2 & AI 主动回复 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{优先级规则}
+
+\begin{itemize}
+    \item 高优先级消息显示期间，低优先级消息被忽略
+    \item 同优先级消息总是可以覆盖当前消息
+    \item \texttt{ShowMessage()} 默认使用 Normal 优先级
+    \item \texttt{ShowMessage(text, duration, High)} 用于 AI 回复
+    \item 外部可通过 \texttt{IsShowingHighPriority} 属性查询当前是否为高优先级展示
+\end{itemize}
+
+% ═══════════════════════════════════════════
 \section{动画详述}
 % ═══════════════════════════════════════════
 
@@ -868,15 +1018,19 @@ Desktop_per_pro/
     |   |   +-- DragHandler.cs             # 拖拽/抛掷/点击交互
     |   |   +-- WindowOverlay.cs           # Win32 透明窗口
     |   |   +-- TimeWeatherController.cs   # 昼夜/天气响应
-    |   |   +-- ChatBubble.cs              # 头顶气泡
-    |   |   +-- ChatManager.cs             # AI 对话管理
+    |   |   +-- ChatBubble.cs              # 头顶气泡（含优先级系统）
+    |   |   +-- ChatManager.cs             # AI 对话管理 + Function Calling
     |   |   +-- AutoChat.cs                # 自动闲聊
     |   |   +-- BottomInputBar.cs          # 底部输入栏
+    |   |   +-- ReminderManager.cs         # 便签提醒 + Server酱³ 推送
+    |   |   +-- ServerPollService.cs       # 服务端轮询 + 数据查询
+    |   |   +-- PerformanceMonitor.cs      # FPS/CPU/内存监控
+    |   |   +-- SystemTrayManager.cs       # 系统托盘图标
+    |   |   +-- DebugWindow.cs             # 调试调参面板
+    |   |   +-- ToolCallInvoker.cs         # AI 工具调用（24+ 工具）
     |   |   +-- HybridRenderer.cs          # 混合渲染管理器
     |   |   +-- IPetRenderer.cs            # 渲染器接口
     |   |   +-- Model3DRenderer.cs         # 3D 渲染器 (预留)
-    |   |   +-- DebugWindow.cs             # 调试调参面板
-    |   |   +-- ToolCallInvoker.cs         # AI 工具调用
     |   +-- Live2D/
     |   |   +-- Models/Fuxuan/             # 符玄 Live2D 模型
     |   +-- Plugins/                       # Cubism SDK
@@ -960,6 +1114,19 @@ Desktop_per_pro/
            &      & Model3DRenderer 背景同样改为黑色\\
            &      & 重建 BuildScript.cs（自动构建脚本）\\
            &      & 更新 LaTeX 技术文档至 v0.9\\
+2026-06-19 & v0.10 & 性能监控系统（PerformanceMonitor：FPS/CPU/内存）\\
+           &       & 桌面宠物开机自启（系统托盘菜单）\\
+           &       & AI 回复优先级气泡系统（MsgPriority High/Normal/Low）\\
+           &       & 修复 AI 回复时被自动问候抢占的问题\\
+           &       & ToolCallInvoker 工具注册防抖\\
+2026-06-20 & v0.11 & 服务端推送轮询 + Server酱³ 手机推送\\
+           &       & 桌面开机通知到手机\\
+           &       & 微信课表小程序数据打通：成绩/课表/考试/学业概览\\
+           &       & ServerPollService 新增 3 个数据查询方法\\
+           &       & ToolCallInvoker 工具扩展至 24 个\\
+           &       & 新增 query\_scores / query\_schedule / query\_user\_status 术式\\
+           &       & ChatManager 提示词新增「卜算传讯」章节\\
+           &       & 修复逐句显示完后弹出全文的 bug\\
 \bottomrule
 \end{tabular}
 \end{table}
