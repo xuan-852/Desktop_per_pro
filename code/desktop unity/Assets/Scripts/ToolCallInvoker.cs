@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 using UnityEngine;
 
 /// <summary>
@@ -375,6 +376,103 @@ public class ToolCallInvoker : MonoBehaviour
             mgr.DeleteReminder(match.id);
             return $"✅ 已销毁记事「{match.text}」";
         };
+
+        // ——— 21. 查询考试：从课表服务获取考试安排 ———
+        _executors["query_exams"] = args =>
+        {
+            var poll = FindObjectOfType<ServerPollService>();
+            if (poll == null) return "❌ 课表传讯服务未就绪";
+            try
+            {
+                var task = Task.Run(() => poll.QueryUpcomingExamsAsync());
+                return task.GetAwaiter().GetResult();
+            }
+            catch (System.Exception e)
+            {
+                return $"❌ 查询考试时出错: {e.Message}";
+            }
+        };
+
+        // ——— 22. 查看成绩：查询学业成绩 ———
+        _executors["query_scores"] = args =>
+        {
+            var poll = FindObjectOfType<ServerPollService>();
+            if (poll == null) return "❌ 课表传讯服务未就绪";
+            try
+            {
+                var task = Task.Run(() => poll.QueryScoresAsync());
+                return task.GetAwaiter().GetResult();
+            }
+            catch (System.Exception e)
+            {
+                return $"❌ 查询成绩时出错: {e.Message}";
+            }
+        };
+
+        // ——— 23. 查看课表：查询课程安排 ———
+        _executors["query_schedule"] = args =>
+        {
+            var poll = FindObjectOfType<ServerPollService>();
+            if (poll == null) return "❌ 课表传讯服务未就绪";
+            int week = 0;
+            int.TryParse(JsonRead(args, "week"), out week);
+            try
+            {
+                var task = Task.Run(() => poll.QueryScheduleAsync(week));
+                return task.GetAwaiter().GetResult();
+            }
+            catch (System.Exception e)
+            {
+                return $"❌ 查询课表时出错: {e.Message}";
+            }
+        };
+
+        // ——— 24. 卜算学业：查看用户绑定状态和学业概览 ———
+        _executors["query_user_status"] = args =>
+        {
+            var poll = FindObjectOfType<ServerPollService>();
+            if (poll == null) return "❌ 课表传讯服务未就绪";
+            try
+            {
+                var task = Task.Run(() => poll.QueryUserStatusAsync());
+                return task.GetAwaiter().GetResult();
+            }
+            catch (System.Exception e)
+            {
+                return $"❌ 查询学业信息时出错: {e.Message}";
+            }
+        };
+
+        // ——— 25. 变脸术：切换桌面宠物的面部表情 ———
+        _executors["set_expression"] = args =>
+        {
+            string exp = JsonRead(args, "expression");
+            if (string.IsNullOrEmpty(exp)) return "❌ 未指定表情";
+            var renderer = FindObjectOfType<Live2DRenderer>();
+            if (renderer == null) return "❌ 本座法身未现";
+            renderer.PlayExpression(exp);
+            return $"✅ 已切换表情为「{exp}」";
+        };
+
+        // ——— 26. 演武：播放一段复合动作 ———
+        _executors["play_action"] = args =>
+        {
+            string action = JsonRead(args, "action");
+            if (string.IsNullOrEmpty(action)) return "❌ 未指定动作";
+            var renderer = FindObjectOfType<Live2DRenderer>();
+            if (renderer == null) return "❌ 本座法身未现";
+            renderer.PlayAction(action);
+            return $"✅ 正在演武「{action}」";
+        };
+
+        // ——— 27. 归元：停止所有动作/表情 ———
+        _executors["stop_action"] = args =>
+        {
+            var renderer = FindObjectOfType<Live2DRenderer>();
+            if (renderer == null) return "❌ 本座法身未现";
+            renderer.ActionController?.StopAllWithFade();
+            return "✅ 已归元，恢复常态";
+        };
     }
 
     // ================================================================
@@ -636,6 +734,91 @@ public class ToolCallInvoker : MonoBehaviour
           ""id"": { ""type"": ""string"", ""description"": ""提醒的 ID（支持前几位模糊匹配）"" }
         },
         ""required"": [""id""]
+      }
+    }
+  },
+  {
+    ""type"": ""function"",
+    ""function"": {
+      ""name"": ""query_exams"",
+      ""description"": ""查询教务系统中的考试安排。用户问「什么时候考试」「考试时间」「考试安排」时调用。返回每门考试的日期、时间、地点。"",
+      ""parameters"": {
+        ""type"": ""object"",
+        ""properties"": {}
+      }
+    }
+  },
+  {
+    ""type"": ""function"",
+    ""function"": {
+      ""name"": ""query_scores"",
+      ""description"": ""查询学业成绩。用户问「我考了多少分」「成绩怎么样」「出分了吗」时调用。返回所有学期的课程成绩和学分。"",
+      ""parameters"": {
+        ""type"": ""object"",
+        ""properties"": {}
+      }
+    }
+  },
+  {
+    ""type"": ""function"",
+    ""function"": {
+      ""name"": ""query_schedule"",
+      ""description"": ""查询课表。用户问「今天有什么课」「课表」「下周上什么课」时调用。可以指定周次。不指定周次时返回全部课表。"",
+      ""parameters"": {
+        ""type"": ""object"",
+        ""properties"": {
+          ""week"": { ""type"": ""integer"", ""description"": ""要查询的周次，如 1, 2, 3… 不传则查看全部课表"" }
+        }
+      }
+    }
+  },
+  {
+    ""type"": ""function"",
+    ""function"": {
+      ""name"": ""query_user_status"",
+      ""description"": ""查询用户的教务账号绑定状态和学业概览。用户问「你都知道我什么」「我的学业数据」「我的账号信息」时调用。返回学号、学期、成绩/考试/课表数量等概览数据。"",
+      ""parameters"": {
+        ""type"": ""object"",
+        ""properties"": {}
+      }
+    }
+  },
+  {
+    ""type"": ""function"",
+    ""function"": {
+      ""name"": ""set_expression"",
+      ""description"": ""切换桌面宠物的面部表情。支持：happy（开心）、sad（悲伤）、blush（羞涩）、confused（困惑）、love（爱意）、angry（生气）、sleepy（困倦）、surprise（惊讶）、tear（泪目）。使用时传入中文或英文均可。"",
+      ""parameters"": {
+        ""type"": ""object"",
+        ""properties"": {
+          ""expression"": { ""type"": ""string"", ""description"": ""表情名称，支持 happy/sad/blush/confused/love/angry/sleepy/surprise/tear 或其中文译名"" }
+        },
+        ""required"": [""expression""]
+      }
+    }
+  },
+  {
+    ""type"": ""function"",
+    ""function"": {
+      ""name"": ""play_action"",
+      ""description"": ""播放一段复合动作动画。支持：stretch（伸懒腰）、cry（捂脸哭）、confuse（歪头困惑）、heart_eyes（比心）、money（数钱）、blush（捧脸羞）、magic_circle（绘制法阵）。使用时传入中文或英文均可。"",
+      ""parameters"": {
+        ""type"": ""object"",
+        ""properties"": {
+          ""action"": { ""type"": ""string"", ""description"": ""动作名称，支持 stretch/cry/confuse/heart_eyes/money/blush/magic_circle 或其中文名"" }
+        },
+        ""required"": [""action""]
+      }
+    }
+  },
+  {
+    ""type"": ""function"",
+    ""function"": {
+      ""name"": ""stop_action"",
+      ""description"": ""停止当前正在播放的所有动作和表情，使桌面宠物恢复默认待机姿态。用户说「停下」「别动了」「恢复」时调用。"",
+      ""parameters"": {
+        ""type"": ""object"",
+        ""properties"": {}
       }
     }
   }

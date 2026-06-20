@@ -288,6 +288,11 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     private bool _actionLocked = false;
     public event System.Action OnForcedActionFinished;
 
+    // ===== Live2DParameterMapper + 新动作系统 =====
+    private Live2DParameterMapper _mapper;
+    public Live2DActionController ActionController { get; private set; }
+    // =====
+
     // ===== 调试偏移系统（DebugWindow 实时调参） =====
     /// <summary>是否启用调试偏移</summary>
     public bool debugOffsetEnabled = false;
@@ -311,6 +316,10 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
     // 空闲→走路体态淡入计时（动作结束后切走路不生硬）
     private float _walkFadeInRemaining = 0f;
+
+    // 走路时随机触发表情的计时
+    private float _walkExpressionTimer = 0f;
+    private float _walkExpressionCooldown = 0f;
 
     // 屏幕边缘碰撞反弹
     private float _wallHitTime = 0f;
@@ -374,10 +383,20 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         {
             _modelRoot = Instantiate(modelPrefab, transform);
             
-            // 设置 Layer（确保 Camera 能看到）
-            // ★ 模型置顶：移到叠加层，不被主相机渲染
+#if UNITY_EDITOR
+            // 编辑器调试：使用场景预设的相机参数
+            SetLayerRecursively(_modelRoot, 0);
+            _overlayReady = false;
+            
+            Camera mainCam = Camera.main;
+            if (mainCam != null)
+            {
+                mainCam.cullingMask = -1; // Everything，防止之前 ExcludeOverlay 改坏了
+            }
+#else
             SetLayerRecursively(_modelRoot, OVERLAY_LAYER);
             ExcludeOverlayLayerFromMainCamera();
+#endif
             
             Debug.Log($"[Live2DRenderer] _modelRoot={_modelRoot.name}, activeSelf={_modelRoot.activeSelf}, activeInHierarchy={_modelRoot.activeInHierarchy}");
             Debug.Log($"[Live2DRenderer] _modelRoot.transform.childCount={_modelRoot.transform.childCount}");
@@ -397,7 +416,13 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
                 Debug.Log($"[Live2DRenderer] CubismRenderController.enabled={renderController.enabled}");
             }
 
+            // 编辑器下不创建叠加相机（主相机直接可见）
+#if !UNITY_EDITOR
             SetupOverlayRendering();
+#endif
+
+            // ★ 初始化参数映射器 + 新动作系统
+            InitActionSystem();
             
             _loaded = true;
             Debug.Log($"[Live2DRenderer] 模型 Prefab 实例化完成, CubismModel={_cubismModel != null}, Physics={_physicsController != null}");
@@ -549,6 +574,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             return;
         }
 
+        // ★ 更新新动作系统（表情淡入淡出）
+        ActionController?.Update(Time.deltaTime);
+
         // 累积噪声时间
         _noiseTimeX += Time.deltaTime * 0.6f;
         _noiseTimeY += Time.deltaTime * 0.4f;
@@ -568,6 +596,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
                 ResetIdleAction();
                 _walkBlendRemaining = 0f;
                 _walkFadeInRemaining = WALK_FADE_IN_DURATION;
+                // 走路表情冷却：走一会儿才随机触发
+                _walkExpressionTimer = 0f;
+                _walkExpressionCooldown = Random.Range(3f, 8f);
             }
             // 走路淡入权重（手脚幅度从0渐增至1）
             float walkAnimWeight = 1f;
@@ -577,6 +608,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
                 walkAnimWeight = raw * raw; // ease-in
             }
             UpdateWalkAnimation(walkAnimWeight);
+
+            // ★ 走路时随机触发傲娇闭眼表情
+            UpdateWalkExpression();
         }
         else
         {
@@ -585,6 +619,17 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
                 // 走路→空闲：开始混合消退
                 _walkBlendRemaining = IDLE_BLEND_DURATION;
                 _walkFadeInRemaining = 0f; // 重置淡入（下次空闲→走路重新开始）
+
+                // 走路表情残留清理：恢复面部默认值
+                _walkExpressionTimer = 0f;
+                _walkExpressionCooldown = 0f;
+                SetParameter("ParamEyeLOpen", 1f);
+                SetParameter("ParamEyeROpen", 1f);
+                SetParameter("ParamEyeLSmile", 0f);
+                SetParameter("ParamEyeRSmile", 0f);
+                SetParameter("ParamMouthForm", 0f);
+                SetParameter("ParamAngleZ", 0f);
+                SetParameter("ParamAngleY", 0f);
             }
 
             if (_walkBlendRemaining > 0f)
@@ -629,9 +674,6 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             SetParameter("ParamAngleY", headBack);
 
             _wallHitTime -= Time.deltaTime;
-
-            // 强制刷新让网格同步
-            _cubismModel.ForceUpdateNow();
         }
 
         // ★ 鼠标眼睛跟随覆盖：在所有动画参数之后、ForceUpdateNow 之前设置
@@ -663,7 +705,11 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         // ★ 强制网格更新：Cubism 的网格在 Update() 阶段已用 C++ 核心算完，
         //    Physics(800) 覆盖了衣服参数，我们(801)覆盖了手臂参数，
         //    但网格仍是旧参数结果，需强制刷新用最新参数重新算一遍。
-        if (isWalking || _walkBlendRemaining > 0f || eyeOverridden)
+        // ★ 优化：WallHit、走路、眼球追踪、调试偏移统一一次 ForceUpdateNow
+        bool hasActiveAction = (_currentIdleAction > 0 && _idleActionTime > 0f);
+        bool debugOffsetActive = (debugOffsetEnabled && !_actionLocked && !hasActiveAction && debugOffsets != null && debugOffsets.Count > 0);
+        bool needsForceUpdate = isWalking || _walkBlendRemaining > 0f || eyeOverridden || _wallHitTime > 0f || debugOffsetActive;
+        if (needsForceUpdate)
         {
             _cubismModel.ForceUpdateNow();
         }
@@ -671,8 +717,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         // ★ 调试偏移通道：动画完成后，在动画值上叠加偏移量
         // 因动画每帧重新设值，偏移不会累积（动画值 + 偏移 = 最终值）
         // 任一空闲动作运行时暂停偏移，避免破坏动画手部/手指姿态
-        bool hasActiveAction = (_currentIdleAction > 0 && _idleActionTime > 0f);
-        if (debugOffsetEnabled && !_actionLocked && !hasActiveAction && debugOffsets != null && debugOffsets.Count > 0)
+        if (debugOffsetActive)
         {
             foreach (var kv in debugOffsets)
             {
@@ -695,7 +740,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             SetParameter("Param108", 1f);
             SetParameter("Param119", 1f);
 
-            // ★ 强制 Cubism 重新计算网格变形
+            // ★ 调试偏移的第二次 ForceUpdate (无法合并，因为偏移值在第一次 ForceUpdate 后才读取到的 animVal)
             _cubismModel.ForceUpdateNow();
         }
 
@@ -748,7 +793,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
                     if (!_chatBubble.IsShowing)
                     {
                         string msg = PickIdleBubbleMessage();
-                        _chatBubble.ShowMessage(msg, 4f);
+                        _chatBubble.ShowMessage(msg, 4f, ChatBubble.MsgPriority.Low);
                     }
                     _idleBubbleTimer = 0f;
                 }
@@ -933,8 +978,8 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         // 动作冷却衰减
         if (_idleActionCooldown > 0f) _idleActionCooldown -= Time.deltaTime;
 
-        // 当前动作结束后，加权随机选取下一个（走路时不触发，需冷却）
-        if (_currentIdleAction == 0 && !isPaused && _idleActionCooldown <= 0f)
+        // 当前动作结束后，加权随机选取下一个（走路/动作锁定时不触发，需冷却）
+        if (_currentIdleAction == 0 && !isPaused && !_actionLocked && _idleActionCooldown <= 0f)
         {
             _currentIdleAction = PickWeightedIdleAction();
             _idleActionTime = 0f;
@@ -942,7 +987,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             Debug.Log($"[Live2DRenderer] ▶ 动作 #{_currentIdleAction}");
         }
 
-        if (_currentIdleAction > 0)
+        if (_currentIdleAction > 0 && !_actionLocked)
         {
             _idleActionTime += Time.deltaTime;
             _complexActionPhase += Time.deltaTime;
@@ -1369,6 +1414,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         _complexActionPhase = 0f;
         _idleActionCooldown = 1.5f; // 冷却1.5秒防立即重播
 
+        // ★ 新系统：停止表情淡出（避免残留）
+        StopExpression(0.15f);
+
         // 清理可能被改过的参数（表情/特殊参数）
         SetParameter("ParamAngleZ", 0f);
         SetParameter("ParamEyeLSmile", 0f);
@@ -1466,6 +1514,61 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     }
 
     /// <summary>
+    /// 强制播放指定动作（新系统 — 按名称，支持表情和复合动作）
+    /// 名称格式: "exp:happy" = 表情, "act:stretch" = 复合动作, "idle:5" = 旧式动作
+    /// </summary>
+    public void ForceAction(string actionSpec, System.Action onComplete = null)
+    {
+        if (!_loaded || _cubismModel == null || ActionController == null)
+        {
+            onComplete?.Invoke();
+            return;
+        }
+
+        if (actionSpec.StartsWith("exp:"))
+        {
+            // 表情
+            string expName = actionSpec.Substring(4);
+            ActionController.PlayExpression(expName);
+            onComplete?.Invoke(); // 表情立即返回（淡入中）
+        }
+        else if (actionSpec.StartsWith("act:"))
+        {
+            // 复合动作 — 异步播放
+            string actName = actionSpec.Substring(4);
+            PlayAction(actName, onComplete);
+        }
+        else if (actionSpec.StartsWith("idle:"))
+        {
+            // 旧式动作向后兼容
+            string numStr = actionSpec.Substring(5);
+            if (int.TryParse(numStr, out int id))
+                ForceIdleAction(id);
+            onComplete?.Invoke();
+        }
+        else
+        {
+            // 裸名：先查动作，再查表情
+            if (ActionController.Actions != null &&
+                System.Linq.Enumerable.Contains(ActionController.Actions.AvailableActions, actionSpec))
+            {
+                PlayAction(actionSpec, onComplete);
+            }
+            else if (ActionController.Expressions != null &&
+                     System.Linq.Enumerable.Contains(ActionController.Expressions.AvailableExpressions, actionSpec))
+            {
+                ActionController.PlayExpression(actionSpec);
+                onComplete?.Invoke();
+            }
+            else
+            {
+                Debug.LogWarning($"[Live2DRenderer] 未知动作/表情: {actionSpec}");
+                onComplete?.Invoke();
+            }
+        }
+    }
+
+    /// <summary>
     /// 按权重随机选取一个空闲动作（1-11），受时间/天气调节
     /// </summary>
     private int PickWeightedIdleAction()
@@ -1546,11 +1649,13 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         Vector3 screenPos = new Vector3(worldX, Screen.height - worldY, 10f);
         Vector3 worldPos = cam.ScreenToWorldPoint(screenPos);
 
-        // 调试日志
-        if (Time.frameCount % 60 == 0) // 每秒打印一次
+        // 调试日志（仅在编辑器中，每秒一次）
+#if UNITY_EDITOR
+        if (Time.frameCount % 60 == 0)
         {
             Debug.Log($"[Live2DRenderer] pet({_pet.petX},{_pet.petY}) size({_pet.petWidth},{_pet.petHeight}) → screenPos({screenPos.x},{screenPos.y}) → worldPos({worldPos.x},{worldPos.y}), scale={modelScale}");
         }
+#endif
 
         _modelRoot.transform.position = worldPos;
 
@@ -1680,6 +1785,170 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         if (_cubismModel == null) return;
         var param = _cubismModel.Parameters.FindById(name);
         if (param != null) param.Value = value;
+    }
+
+    /// <summary>
+    /// 走路时随机触发困倦表情——先眯眼笑纹→再慢慢垂眼→微张嘴（打哈欠感）
+    /// 夜间（18~6）触发更频繁，犯困时段（22~5）最频繁
+    /// </summary>
+    private void UpdateWalkExpression()
+    {
+        // 冷却中
+        if (_walkExpressionCooldown > 0f)
+        {
+            _walkExpressionCooldown -= Time.deltaTime;
+            return;
+        }
+
+        _walkExpressionTimer += Time.deltaTime;
+
+        // 夜间触发更多：白天 2.5~4 秒 → 夜晚 3~5 秒 → 犯困 4~7 秒
+        bool sleepyTime = _timeController != null && _timeController.isSleepyTime;
+        bool nightTime = _timeController != null && _timeController.isNight;
+        float duration;
+        if (sleepyTime)
+            duration = 4f + Random.value * 3f;
+        else if (nightTime)
+            duration = 3f + Random.value * 2f;
+        else
+            duration = 2.5f + Random.value * 1.5f;
+
+        float t = Mathf.Clamp01(_walkExpressionTimer / duration);
+
+        // ★ 分段曲线：0~30% 先眯眼（眼皮还睁着），30~100% 从睁眼慢慢垂到全闭
+        float smilePhase = Mathf.Clamp01(t / 0.3f);
+        float closePhase = Mathf.Clamp01((t - 0.3f) / 0.7f);
+        float smileVal = smilePhase * smilePhase * (3f - 2f * smilePhase); // smoothstep
+        float closeVal = closePhase * closePhase * closePhase;             // easeInCubic 更缓慢闭眼
+
+        // 闭眼（先留缝再慢慢全垂）
+        SetParameter("ParamEyeLOpen", Mathf.Lerp(1f, 0f, closeVal));
+        SetParameter("ParamEyeROpen", Mathf.Lerp(1f, 0f, closeVal));
+        // 眯眼笑纹（先出后消，配合垂眼一起消退）
+        float smileDecay = smileVal * (1f - t);
+        SetParameter("ParamEyeLSmile", smileDecay * 0.5f);
+        SetParameter("ParamEyeRSmile", smileDecay * 0.5f);
+        // 嘴微张（打哈欠感，配合闭眼节奏）
+        SetParameter("ParamMouthOpenY", closeVal * 0.3f);
+        // ★ 头继续下垂：走路体态已低头 8°（ApplyWalkBodyPose），困了再下垂 4° → 共 12°
+        //   用 closeVal 同步节奏，不会出现一开始跳变
+        SetParameter("ParamAngleY", 8f + closeVal * 4f);
+
+        if (t >= 1f)
+        {
+            // 表情结束：恢复面部默认值
+            SetParameter("ParamEyeLOpen", 1f);
+            SetParameter("ParamEyeROpen", 1f);
+            SetParameter("ParamEyeLSmile", 0f);
+            SetParameter("ParamEyeRSmile", 0f);
+            SetParameter("ParamMouthOpenY", 0f);
+            // ★ ParamAngleY 不重置——ApplyWalkBodyPose 在 Update() 中每帧重设走路体态
+
+            // 冷却：白天 5~13 秒 → 夜晚 3~8 秒 → 犯困 2~5 秒
+            _walkExpressionTimer = 0f;
+            if (sleepyTime)
+                _walkExpressionCooldown = 2f + Random.value * 3f;
+            else if (nightTime)
+                _walkExpressionCooldown = 3f + Random.value * 5f;
+            else
+                _walkExpressionCooldown = 5f + Random.value * 8f;
+        }
+    }
+
+    // ================================================================
+    //  新动作系统（Live2DParameterMapper + ExpressionManager + ActionPresetPlayer）
+    // ================================================================
+
+    /// <summary>初始化参数映射器和动作控制器</summary>
+    private void InitActionSystem()
+    {
+        if (_cubismModel == null) return;
+
+        _mapper = new Live2DParameterMapper(_cubismModel);
+
+        // 从 Resources 加载映射文件
+        TextAsset mapAsset = Resources.Load<TextAsset>("Live2D/ParamMaps/fuxuan_map");
+        if (mapAsset != null)
+        {
+            _mapper.LoadMappingFromJson(mapAsset.text);
+            Debug.Log($"[Live2DRenderer] 参数映射器已加载: {_mapper.ModelName}, {_mapper.SemanticToId.Count} 条目");
+        }
+        else
+        {
+            Debug.LogWarning("[Live2DRenderer] Resources 中未找到映射文件，尝试从文件系统加载");
+            string mapPath = System.IO.Path.Combine(Application.dataPath,
+                "Scripts/Live2DFramework/ParamMaps/fuxuan_map.json");
+            if (System.IO.File.Exists(mapPath))
+            {
+                _mapper.LoadMappingFromFile(mapPath);
+            }
+        }
+
+        // 创建动作控制器
+        ActionController = new Live2DActionController(_mapper, this);
+
+        // 加载表情和动作预设
+        ActionController.LoadAllPresets();
+
+        Debug.Log($"[Live2DRenderer] 动作控制器已就绪，表情={ActionController.Expressions.AvailableExpressions.Count}个，动作={ActionController.Actions.AvailableActions.Count}个");
+    }
+
+    // ================================================================
+    //  新动作系统公开 API — 供 AI / 右键菜单 / 外部调用
+    // ================================================================
+
+    /// <summary>播放表情（带淡入淡出）</summary>
+    public void PlayExpression(string name, float fadeTime = -1f)
+    {
+        if (ActionController == null) return;
+        ActionController.PlayExpression(name, fadeTime);
+    }
+
+    /// <summary>停止表情</summary>
+    public void StopExpression(float fadeTime = -1f)
+    {
+        ActionController?.StopExpression(fadeTime);
+    }
+
+    /// <summary>播放复合动作</summary>
+    public void PlayAction(string name, System.Action onComplete = null)
+    {
+        if (ActionController == null)
+        {
+            onComplete?.Invoke();
+            return;
+        }
+
+        // ★ 清空闲动作残留状态，防止旧式 idle 在新动作结束后继续播放已过时的动作
+        ResetIdleAction();
+
+        // ★ 暂停宠物物理（停走 + 冻结状态机），避免"边走边做动作"
+        if (_pet != null)
+            _pet.Pause(0f);
+
+        _actionLocked = true; // 锁定不被走路覆盖
+        ActionController.PlayAction(name, () =>
+        {
+            _actionLocked = false;
+            // ★ 动作完毕恢复宠物物理
+            if (_pet != null) _pet.Resume();
+            OnForcedActionFinished?.Invoke();
+            onComplete?.Invoke();
+        });
+    }
+
+    /// <summary>获取可用的表情列表（逗号分隔字符串）</summary>
+    public string GetAvailableExpressions()
+    {
+        if (ActionController?.Expressions == null) return "无";
+        return string.Join(", ", ActionController.Expressions.AvailableExpressions);
+    }
+
+    /// <summary>获取可用的动作列表（逗号分隔字符串）</summary>
+    public string GetAvailableActions()
+    {
+        if (ActionController?.Actions == null) return "无";
+        return string.Join(", ", ActionController.Actions.AvailableActions);
     }
 
     #region IPetRenderer
@@ -1986,6 +2255,18 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         Debug.Log($"[Live2DRenderer] 主相机已剔除 Layer {OVERLAY_LAYER}");
     }
 
+    /// <summary>获取当前 RT 分辨率缩放（从 PerformanceMonitor 读取）</summary>
+    private float GetRTScale()
+    {
+        var pet = GetComponent<DesktopPet>();
+        if (pet != null)
+        {
+            var pm = pet.GetPerformanceMonitor();
+            if (pm != null) return pm.rtResolutionScale;
+        }
+        return 1f; // 默认全分辨率
+    }
+
     /// <summary>设置叠加相机+RT</summary>
     private void SetupOverlayRendering()
     {
@@ -1994,11 +2275,13 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         Camera mainCam = Camera.main;
         if (mainCam == null) return;
 
-        // 创建 RT
-        _overlayScreenW = Screen.width;
-        _overlayScreenH = Screen.height;
+        // 根据性能档位创建 RT（High=100%, Normal=75%, Low=50%）
+        float scale = GetRTScale();
+        _overlayScreenW = Mathf.Max(1, (int)(Screen.width * scale));
+        _overlayScreenH = Mathf.Max(1, (int)(Screen.height * scale));
         _overlayRT = new RenderTexture(_overlayScreenW, _overlayScreenH, 24, RenderTextureFormat.ARGB32);
         _overlayRT.name = "ModelOverlayRT";
+        _overlayRT.useMipMap = false;
         _overlayRT.Create();
 
         // 创建叠加相机
@@ -2036,16 +2319,21 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     {
         if (!_overlayReady || _overlayRT == null || _pet == null) return;
 
-        // 窗口大小变了就重建 RT
-        if (Screen.width != _overlayScreenW || Screen.height != _overlayScreenH)
+        // 窗口大小或性能档位变了就重建 RT
+        float scale = GetRTScale();
+        int targetW = Mathf.Max(1, (int)(Screen.width * scale));
+        int targetH = Mathf.Max(1, (int)(Screen.height * scale));
+        if (targetW != _overlayScreenW || targetH != _overlayScreenH)
         {
-            _overlayScreenW = Screen.width;
-            _overlayScreenH = Screen.height;
+            _overlayScreenW = targetW;
+            _overlayScreenH = targetH;
             if (_overlayRT != null) _overlayRT.Release();
             _overlayRT = new RenderTexture(_overlayScreenW, _overlayScreenH, 24, RenderTextureFormat.ARGB32);
             _overlayRT.name = "ModelOverlayRT";
+            _overlayRT.useMipMap = false;
             _overlayRT.Create();
             _overlayCamera.targetTexture = _overlayRT;
+            Debug.Log($"[Live2DRenderer] RT 分辨率变更: {_overlayScreenW}x{_overlayScreenH} (scale={scale})");
         }
 
         SyncOverlayCamera();
@@ -2083,6 +2371,15 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         {
             SetLayerRecursively(child.gameObject, layer);
         }
+    }
+
+    /// <summary>
+    /// 性能档位变化时回调 — 由 DesktopPet.PerformanceMonitor 触发
+    /// </summary>
+    public void OnPerformanceTierChanged(PerformanceTier tier)
+    {
+        // 分辨率缩放由 OnGUI 中的重建逻辑自动处理（读取 PerformanceMonitor.rtResolutionScale）
+        Debug.Log($"[Live2DRenderer] 性能档位：{tier}");
     }
 
     /// <summary>
@@ -2149,4 +2446,89 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             names[i] = _cubismModel.Parameters[i].Id;
         return names;
     }
+
+#if UNITY_EDITOR
+    // ===== 表情快捷测试 =====
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 表情/happy")]
+    private static void TestPlayHappy(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayExpression("happy"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 表情/surprise")]
+    private static void TestPlaySurprise(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayExpression("surprise"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 表情/sleepy")]
+    private static void TestPlaySleepy(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayExpression("sleepy"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 表情/angry")]
+    private static void TestPlayAngry(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayExpression("angry"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 表情/sad")]
+    private static void TestPlaySad(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayExpression("sad"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 表情/blush")]
+    private static void TestPlayBlush(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayExpression("blush"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 表情/love")]
+    private static void TestPlayLove(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayExpression("love"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 表情/confused")]
+    private static void TestPlayConfused(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayExpression("confused"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 表情/neutral")]
+    private static void TestPlayNeutral(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayExpression("neutral"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 表情/tear")]
+    private static void TestPlayTear(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayExpression("tear"); }
+
+    // ===== 动作快捷测试 =====
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 动作/stretch")]
+    private static void TestPlayStretch(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayAction("stretch"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 动作/star_spin")]
+    private static void TestPlayStarSpin(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayAction("star_spin"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 动作/tilt")]
+    private static void TestPlayTilt(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayAction("tilt"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 动作/smile")]
+    private static void TestPlaySmile(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayAction("smile"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 动作/money")]
+    private static void TestPlayMoney(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayAction("money"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 动作/magic_circle")]
+    private static void TestPlayMagicCircle(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayAction("magic_circle"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 动作/heart_eyes")]
+    private static void TestPlayHeartEyes(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayAction("heart_eyes"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 动作/cry")]
+    private static void TestPlayCry(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayAction("cry"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 动作/confuse")]
+    private static void TestPlayConfuse(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayAction("confuse"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 动作/brow")]
+    private static void TestPlayBrow(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayAction("brow"); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 动作/blush")]
+    private static void TestPlayActionBlush(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayAction("blush"); }
+
+    // ===== 工具按钮 =====
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/⏹ 停止所有")]
+    private static void TestStopAll(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.StopExpression(0.3f); }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/ℹ 列出可用表情")]
+    private static void TestListExpr(UnityEditor.MenuCommand cmd)
+    {
+        var r = (Live2DRenderer)cmd.context;
+        Debug.Log($"[RenderCtx] 可用表情: {r.GetAvailableExpressions()}");
+    }
+
+    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/ℹ 列出可用动作")]
+    private static void TestListAct(UnityEditor.MenuCommand cmd)
+    {
+        var r = (Live2DRenderer)cmd.context;
+        Debug.Log($"[RenderCtx] 可用动作: {r.GetAvailableActions()}");
+    }
+#endif
 }

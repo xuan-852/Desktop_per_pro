@@ -30,7 +30,7 @@ public class DesktopPet : MonoBehaviour
 
     // ================ 可调参数（改这里）================
     const int GROUND_Y_MARGIN     = 0;       // 地面距屏幕底部距离（像素），负数=往下调，正数=往上调
-    const float WALK_SPEED_FACTOR = 0.5f;    // 移动速度系数（1=正常，0.5=一半）
+    const float WALK_SPEED_FACTOR = 24f;     // 移动速度（像素/秒，帧率无关）
     // ==================================================
 
     #region 物理状态
@@ -134,14 +134,106 @@ public class DesktopPet : MonoBehaviour
     private WindowOverlay _windowOverlay;
     private IPetRenderer _renderer;
     private SystemTrayManager _trayManager;
+    private PerformanceMonitor _perfMonitor;
     private bool _pendingEscToTray = false;  // ESC 按下时托盘未就绪，等就绪后自动隐藏
 
     #endregion
 
     #region Unity 生命周期
 
+    // ===== 崩溃日志 & 内存监控 =====
+    private const string CrashLogPath = "crash_log.txt";
+    private const long CRASH_LOG_MAX_BYTES = 1024L * 1024L;  // crash_log.txt 超过1MB自动截断
+    private float _memoryCheckInterval = 30f;  // 每30秒检查一次内存
+    private float _memoryCheckTimer = 0f;
+    private const long MEMORY_WARNING_MB = 800L;  // 超过800MB触发GC
+    private const long MEMORY_CRITICAL_MB = 1200L; // 超过1.2GB记录警告
+    private float _cleanupTimer = 0f;
+    private const float CLEANUP_INTERVAL = 600f;  // 每10分钟清理一次旧日志
+
+    /// <summary>监听 Unity 日志，捕获崩溃前最后一刻的痕迹</summary>
+    private void CaptureCrashLog(string logString, string stackTrace, LogType type)
+    {
+        if (type == LogType.Exception || type == LogType.Error)
+        {
+            try
+            {
+                string msg = $"[{DateTime.Now:HH:mm:ss}] {type}: {logString}\n{stackTrace}\n";
+                System.IO.File.AppendAllText(CrashLogPath, msg);
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>检查内存压力，必要时强制 GC</summary>
+    private void CheckMemoryPressure()
+    {
+        long memMB = System.GC.GetTotalMemory(false) / (1024L * 1024L);
+        if (memMB > MEMORY_CRITICAL_MB)
+        {
+            Debug.LogWarning($"[DesktopPet] ⚠ 内存占用 {memMB}MB，超过临界值 {MEMORY_CRITICAL_MB}MB");
+            try
+            {
+                string msg = $"[{DateTime.Now:HH:mm:ss}] MEMORY_HIGH: {memMB}MB\n";
+                System.IO.File.AppendAllText(CrashLogPath, msg);
+            }
+            catch { }
+        }
+        if (memMB > MEMORY_WARNING_MB)
+        {
+            Debug.Log($"[DesktopPet] 内存 {memMB}MB，强制 GC");
+            Resources.UnloadUnusedAssets();
+            System.GC.Collect();
+        }
+    }
+
+    /// <summary>清理过期日志文件：crash_log.txt 超1MB截断 + 删除7天前的 build_log*.txt</summary>
+    private void CleanupLogFiles()
+    {
+        try
+        {
+            // 1) crash_log.txt 超过 1MB 时截断，保留最后 2000 行
+            var crashInfo = new System.IO.FileInfo(CrashLogPath);
+            if (crashInfo.Exists && crashInfo.Length > CRASH_LOG_MAX_BYTES)
+            {
+                string[] lines = System.IO.File.ReadAllLines(CrashLogPath);
+                if (lines.Length > 2000)
+                {
+                    string tail = string.Join("\n", lines, lines.Length - 2000, 2000);
+                    System.IO.File.WriteAllText(CrashLogPath, 
+                        "=== 日志已截断（保留最近2000行）===\n" + tail);
+                    Debug.Log($"[DesktopPet] 已截断 {CrashLogPath} → 保留2000行");
+                }
+            }
+
+            // 2) 删除 7 天前的 build_log*.txt
+            string dataDir = System.IO.Directory.GetCurrentDirectory();
+            string[] buildLogs = System.IO.Directory.GetFiles(dataDir, "build_log*.txt");
+            var cutoff = System.DateTime.Now.AddDays(-7);
+            foreach (string path in buildLogs)
+            {
+                var fi = new System.IO.FileInfo(path);
+                if (fi.LastWriteTime < cutoff)
+                {
+                    System.IO.File.Delete(path);
+                    Debug.Log($"[DesktopPet] 已删除过期日志: {fi.Name}");
+                }
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogWarning($"[DesktopPet] 日志清理异常（无害）: {ex.Message}");
+        }
+    }
+
     private void Awake()
     {
+        // ---- 崩溃日志捕获 ----
+#if !UNITY_EDITOR
+        Application.logMessageReceivedThreaded += CaptureCrashLog;
+        // 记录上次崩溃标记：如果互斥锁被遗弃，说明上次异常退出
+#endif
+
         // ---- 单例互斥锁：防止 Build and Run 产生多个实例 ----
         try
         {
@@ -186,11 +278,19 @@ public class DesktopPet : MonoBehaviour
 
     private void Start()
     {
-        // ---- 限制帧率：降低 CPU/GPU 占用 ----
-#if !UNITY_EDITOR
-        Application.targetFrameRate = 60;
+        // ---- 智能性能监控（根据系统负载自适应帧率/分辨率）----
+        _perfMonitor = GetComponent<PerformanceMonitor>();
+        if (_perfMonitor == null)
+        {
+            _perfMonitor = gameObject.AddComponent<PerformanceMonitor>();
+            Debug.Log("[DesktopPet] 自动添加了 PerformanceMonitor 组件");
+        }
+        // 性能档位变化 → 同步刷新渲染分辨率
+        _perfMonitor.OnTierChanged += OnPerformanceTierChanged;
+
         QualitySettings.vSyncCount = 0;
-        Debug.Log($"[DesktopPet] 帧率限制: {Application.targetFrameRate}fps");
+#if !UNITY_EDITOR
+        Debug.Log($"[DesktopPet] 启动性能监控，当前档位: {_perfMonitor.currentTier}");
 #endif
 
         // 初始化物理状态
@@ -262,6 +362,13 @@ public class DesktopPet : MonoBehaviour
         {
             gameObject.AddComponent<ReminderManager>();
             Debug.Log("[DesktopPet] 自动添加了 ReminderManager 组件");
+        }
+
+        // 自动确保 ServerPollService 存在（连接本地课表服务）
+        if (GetComponent<ServerPollService>() == null)
+        {
+            gameObject.AddComponent<ServerPollService>();
+            Debug.Log("[DesktopPet] 自动添加了 ServerPollService 组件");
         }
 
         // 获取渲染器引用：优先使用 HybridRenderer
@@ -384,6 +491,22 @@ public class DesktopPet : MonoBehaviour
                 petVx, petVy, onGround, isDragging, isPaused);
         }
 
+        // ---- 内存压力检查 + 日志清理（每30秒内存 / 每10分钟清理）----
+#if !UNITY_EDITOR
+        _memoryCheckTimer += Time.deltaTime;
+        _cleanupTimer += Time.deltaTime;
+        if (_memoryCheckTimer >= _memoryCheckInterval)
+        {
+            _memoryCheckTimer = 0f;
+            CheckMemoryPressure();
+        }
+        if (_cleanupTimer >= CLEANUP_INTERVAL)
+        {
+            _cleanupTimer = 0f;
+            CleanupLogFiles();
+        }
+#endif
+
         // 物理步进
         StepPet();
 
@@ -405,8 +528,9 @@ public class DesktopPet : MonoBehaviour
     /// </summary>
     private void StepPet()
     {
-        // 1. 应用速度（支持 WALK_SPEED_FACTOR）
-        _walkSpeedAccum += petVx * WALK_SPEED_FACTOR;
+        // 1. 应用速度（deltaTime 归一化，帧率无关）
+        float moveDelta = petVx * WALK_SPEED_FACTOR * Time.deltaTime;
+        _walkSpeedAccum += moveDelta;
         int deltaX = Mathf.RoundToInt(_walkSpeedAccum);
         _walkSpeedAccum -= deltaX;
         petX += deltaX;
@@ -649,6 +773,17 @@ public class DesktopPet : MonoBehaviour
     }
 
     #endregion
+
+    private void OnPerformanceTierChanged(PerformanceTier tier)
+    {
+        var renderer = GetComponent<Live2DRenderer>();
+        if (renderer != null)
+        {
+            renderer.OnPerformanceTierChanged(tier);
+        }
+    }
+
+    public PerformanceMonitor GetPerformanceMonitor() => _perfMonitor;
 
     // Live2DRenderer 负责所有渲染，无需 OnGUI
 

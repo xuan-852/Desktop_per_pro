@@ -101,7 +101,10 @@ public class AutoChat : MonoBehaviour
 
         // 监听 AI 新回复
         if (_chat != null)
+        {
             _chat.OnNewReply += HandleNewReply;
+            _chat.OnSentenceChanged += HandleSentenceChanged;
+        }
 
         // 首次问候
         Invoke("DoTimeGreeting", firstGreetingDelay);
@@ -119,7 +122,10 @@ public class AutoChat : MonoBehaviour
             _drag.OnDragEnded -= HandleDrag;
         }
         if (_chat != null)
+        {
             _chat.OnNewReply -= HandleNewReply;
+            _chat.OnSentenceChanged -= HandleSentenceChanged;
+        }
     }
 
     // ==================== 互动事件 ====================
@@ -128,9 +134,11 @@ public class AutoChat : MonoBehaviour
     {
         if (_chat == null || _chat.IsWaiting) return;
         if (Time.time - _lastInteractionTime < interactionCooldown) return;
+        // 高优消息显示时不打扰
+        if (_bubble != null && _bubble.IsShowingHighPriority) return;
 
         _lastInteractionTime = Time.time;
-        _bubble.ShowMessage("🌸 嗯？找本座何事呀~", 4f);
+        _bubble.ShowMessage("🌸 嗯？找本座何事呀~", 4f, ChatBubble.MsgPriority.Low);
         _chat.SendMessage("*你伸出手指，轻轻戳了戳符玄的额头*", null);
     }
 
@@ -138,13 +146,51 @@ public class AutoChat : MonoBehaviour
     {
         if (_chat == null || _chat.IsWaiting) return;
         if (Time.time - _lastInteractionTime < interactionCooldown) return;
+        // 高优消息显示时不打扰
+        if (_bubble != null && _bubble.IsShowingHighPriority) return;
 
         _lastInteractionTime = Time.time;
-        _bubble.ShowMessage("🌸 哎呀，别摸头啦……", 4f);
+        _bubble.ShowMessage("🌸 哎呀，别摸头啦……", 4f, ChatBubble.MsgPriority.Low);
         _chat.SendMessage("*你温柔地抚摸了符玄的头发*", null);
     }
 
     // ==================== AI 回复监听 ====================
+
+    private void HandleNewReply(string reply)
+    {
+        // 检测困惑 → 触发困惑动作
+        if (_renderer != null && IsConfusedReply(reply))
+        {
+            _renderer.ForceAction("confuse");
+        }
+
+        // ⚠️ 不在这里显示气泡——有逐句切换时 OnSentenceChanged 会立刻接手
+        // 如果 OnSentenceChanged 没有被触发（单句），由它自己处理
+    }
+
+    /// <summary>逐句切换时更新气泡内容，延长显示时间</summary>
+    private void HandleSentenceChanged(string sentence, int idx, int total)
+    {
+        if (_bubble == null) return;
+        if (string.IsNullOrEmpty(sentence)) return;
+
+        // 第一句：用高优先级启动气泡（不可被闲话覆盖）
+        // 后续句子：仅更新文本，延长显示时间
+        if (idx == 0)
+        {
+            _bubble.ShowMessage("🌸 " + sentence, _chat.sentenceInterval + 1f, ChatBubble.MsgPriority.High);
+        }
+        else
+        {
+            _bubble.UpdateText("🌸 " + sentence, _chat.sentenceInterval + 1f);
+        }
+
+        // 如果是最后一句，延长显示时间让用户读完
+        if (idx == total - 1)
+        {
+            _bubble.ExtendDuration(aiReplyDuration);
+        }
+    }
 
     // ===== 困惑检测 =====
 
@@ -156,17 +202,6 @@ public class AutoChat : MonoBehaviour
         "不知所云", "莫名其妙", "什么意思", "困惑",
         "没头没脑", "搞不清楚", "听不明白", "不知所谓"
     };
-
-    private void HandleNewReply(string reply)
-    {
-        _bubble.ShowMessage("🌸 " + reply, aiReplyDuration);
-
-        // 检测困惑 → 触发困惑动作
-        if (_renderer != null && IsConfusedReply(reply))
-        {
-            _renderer.ForceIdleAction(11);
-        }
-    }
 
     private bool IsConfusedReply(string reply)
     {
@@ -182,8 +217,10 @@ public class AutoChat : MonoBehaviour
     private void DoTimeGreeting()
     {
         if (_bubble == null) return;
+        // 高优消息显示时不打扰
+        if (_bubble.IsShowingHighPriority) return;
         string greeting = PickGreeting();
-        _bubble.ShowMessage("🌸 " + greeting, greetingDuration);
+        _bubble.ShowMessage("🌸 " + greeting, greetingDuration, ChatBubble.MsgPriority.Low);
         _lastGreetingTime = Time.time;
     }
 
@@ -192,10 +229,11 @@ public class AutoChat : MonoBehaviour
         // 冷却中或 AI 正在回复时不打扰
         if (_bubble == null) return;
         if (_chat != null && _chat.IsWaiting) return;
+        if (_bubble.IsShowingHighPriority) return;
         if (Time.time - _lastGreetingTime < greetingCooldown) return;
 
         string greeting = PickGreeting();
-        _bubble.ShowMessage("🌸 " + greeting, greetingDuration);
+        _bubble.ShowMessage("🌸 " + greeting, greetingDuration, ChatBubble.MsgPriority.Low);
         _lastGreetingTime = Time.time;
     }
 

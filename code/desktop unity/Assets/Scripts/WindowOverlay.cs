@@ -109,8 +109,12 @@ public class WindowOverlay : MonoBehaviour
     [DllImport("Dwmapi.dll", SetLastError = true)]
     private static extern uint DwmExtendFrameIntoClientArea(IntPtr hWnd, ref MARGINS margins);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SystemParametersInfoW(uint uiAction, uint uiParam, ref RECT pvParam, uint fWinIni);
+
     private const int SM_CXSCREEN = 0;
     private const int SM_CYSCREEN = 1;
+    private const uint SPI_GETWORKAREA = 0x0030;
 
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
@@ -202,14 +206,14 @@ public class WindowOverlay : MonoBehaviour
     private int startupDelayFrames => _startupDelayFrames;
 
     /// <summary>
-    /// 获取全屏窗口尺寸（覆盖整个桌面）
+    /// 获取全屏尺寸（覆盖整个屏幕，包括任务栏区域）
     /// </summary>
-    private void GetFullScreenSize(out int w, out int h)
+    private void GetFullScreenSize(out int w, out int h, out int originX, out int originY)
     {
-        // Unity Screen 在构建时不一定等于真实屏幕
-        // 用 Win32 API 获取准确的屏幕尺寸
         w = GetSystemMetrics(SM_CXSCREEN);
         h = GetSystemMetrics(SM_CYSCREEN);
+        originX = 0;
+        originY = 0;
         Log($"全屏尺寸: {w}x{h}");
     }
 
@@ -224,8 +228,8 @@ public class WindowOverlay : MonoBehaviour
             return false;
         }
 
-        int screenW, screenH;
-        GetFullScreenSize(out screenW, out screenH);
+        int screenW, screenH, screenX, screenY;
+        GetFullScreenSize(out screenW, out screenH, out screenX, out screenY);
 
         // 读取窗口标题做诊断
         StringBuilder titleSb = new StringBuilder(256);
@@ -284,7 +288,7 @@ public class WindowOverlay : MonoBehaviour
         int h = height > 0 ? height : screenH;
 
         bool posResult = SetWindowPos(_hwnd, HWND_TOPMOST,
-            0, 0, w, h,
+            screenX, screenY, w, h,
             SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE);
         if (!posResult)
         {

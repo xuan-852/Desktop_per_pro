@@ -443,10 +443,10 @@ public class ContextMenu : MonoBehaviour
         GUILayout.Label("▶ 强制播放动作", _sectionStyle);
         GUILayout.Space(2);
 
-        DrawActionButtonRow(1, "歪头", 2, "微笑", 3, "挑眉");
-        DrawActionButtonRow(4, "星辉", 5, "伸懒腰", 6, "爱心");
-        DrawActionButtonRow(7, "数钱", 8, "委屈", 9, "法阵");
-        DrawActionButtonRow(10, "害羞", 0, null, 0, null);
+        DrawActionButtonRow("tilt", "歪头", "smile", "微笑", "brow", "挑眉");
+        DrawActionButtonRow("star_spin", "星辉", "stretch", "伸懒腰", "heart_eyes", "爱心");
+        DrawActionButtonRow("money", "数钱", "cry", "委屈", "magic_circle", "法阵");
+        DrawActionButtonRow("blush", "害羞", null, null, null, null);
 
         GUILayout.Space(8);
         GUILayout.Label("🛠 工具", _sectionStyle);
@@ -773,29 +773,29 @@ public class ContextMenu : MonoBehaviour
         GUILayout.EndHorizontal();
     }
 
-    private void DrawActionButtonRow(int id1, string name1, int id2, string name2, int id3, string name3)
+    private void DrawActionButtonRow(string id1, string name1, string id2, string name2, string id3, string name3)
     {
         GUILayout.BeginHorizontal();
         GUILayout.FlexibleSpace();
 
-        if (id1 > 0) DrawActionButton(id1, name1);
-        if (id2 > 0) DrawActionButton(id2, name2);
-        if (id3 > 0) DrawActionButton(id3, name3);
+        if (!string.IsNullOrEmpty(id1)) DrawActionButton(id1, name1);
+        if (!string.IsNullOrEmpty(id2)) DrawActionButton(id2, name2);
+        if (!string.IsNullOrEmpty(id3)) DrawActionButton(id3, name3);
 
         GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
         GUILayout.Space(3);
     }
 
-    private void DrawActionButton(int id, string name)
+    private void DrawActionButton(string id, string name)
     {
-        if (GUILayout.Button($"[{id}] {name}", _buttonStyle, GUILayout.Width(75), GUILayout.Height(28)))
+        if (GUILayout.Button($"{name}", _buttonStyle, GUILayout.Width(75), GUILayout.Height(28)))
         {
             if (_renderer != null)
             {
                 if (_pet != null)
                     _pet.ForceStop();
-                _renderer.ForceIdleAction(id);
+                _renderer.ForceAction(id);
 
                 // 关闭菜单
                 _isOpen = false;

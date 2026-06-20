@@ -262,7 +262,7 @@ public class ReminderManager : MonoBehaviour
         string msg = FormatReminderMessage(r);
         if (_bubble != null)
         {
-            _bubble.ShowMessage(msg, bubbleDuration);
+            _bubble.ShowMessage(msg, bubbleDuration, ChatBubble.MsgPriority.Normal);
         }
 
         // 2. Windows 系统通知
