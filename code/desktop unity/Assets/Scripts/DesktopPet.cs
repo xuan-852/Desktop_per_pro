@@ -474,6 +474,13 @@ public class DesktopPet : MonoBehaviour
             }
         }
 
+        // ——— 应用持久化配置（覆盖 Inspector 默认值）———
+        if (PetConfig.Instance != null)
+        {
+            PetConfig.Instance.ApplyAll();
+            Debug.Log("[DesktopPet] 已应用 PetConfig 持久化配置");
+        }
+
         Debug.Log($"[DesktopPet] 初始化完成 @ ({petX},{petY}), 屏幕: {Screen.width}x{Screen.height}");
 
         // 在非编辑器模式下，等待 WindowOverlay 找到句柄后初始化托盘

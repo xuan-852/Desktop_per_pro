@@ -1144,6 +1144,8 @@ Desktop_per_pro/
     |   |   +-- SystemTrayManager.cs       # 系统托盘图标
     |   |   +-- DebugWindow.cs             # 调试调参面板
     |   |   +-- ToolCallInvoker.cs         # AI 工具调用（28+ 工具，含协程异步）
+    |   |   +-- PetConfig.cs              # 天机簿 — 配置持久化
+    |   |   +-- PetMemory.cs              # 忆境 — 长期记忆系统
     |   |   +-- HybridRenderer.cs          # 混合渲染管理器
     |   |   +-- IPetRenderer.cs            # 渲染器接口
     |   |   +-- Model3DRenderer.cs         # 3D 渲染器 (预留)
@@ -1261,6 +1263,16 @@ Desktop_per_pro/
            &       & ChatManager.DoToolLoop 分派同步 \texttt{Execute()} 与协程 \texttt{ExecuteCoroutine()}\\
            &       & 修复 AutoChat 逐句显示完成后弹出全文的 bug（\texttt{idx >= total} 守卫）\\
            &       & ToolCallInvoker 清理幽灵代码块修复编译错误\\
+           &       & 更新 README + LaTeX 技术文档\\
+2026-06-22 & N20  & \textbf{SystemPrompt 抽离 + 配置持久化 + 长期记忆}\\
+           &       & SystemPrompt 从内联字符串抽离为 \texttt{Resources/SystemPrompt.txt}，支持 \texttt{\{current\_time\}} 占位符\\
+           &       & 新增 PetConfig 天机簿 — 运行时配置 JSON 持久化（权重/API/天气等 15+ 项）\\
+           &       & 新增 PetMemory 忆境 — 长期记忆系统（自动记录工具交互摘要，注入 system prompt）\\
+           &       & ChatManager.Awake 加载 SystemPrompt.txt，BuildSystemPrompt 注入时间 + 记忆\\
+           &       & OnToolResult 自动调用 PetMemory.AddMemory 记录有意义交互（天气/搜索/提醒等）\\
+           &       & DesktopPet.Start 调用 PetConfig.ApplyAll 恢复持久化配置\\
+           &       & 右键菜单「保存配置」按钮调用 PetConfig.CollectAll + Save\\
+           &       & 右键菜单「清空忆境」按钮调用 PetMemory.ClearMemories\\
            &       & 更新 README + LaTeX 技术文档\\
 \bottomrule
 \end{tabular}

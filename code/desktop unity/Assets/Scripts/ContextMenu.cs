@@ -432,6 +432,26 @@ public class ContextMenu : MonoBehaviour
             ApplyWeights();
         }
         GUILayout.EndHorizontal();
+
+        // ——— 持久化配置 ———
+        GUILayout.Space(8);
+        GUILayout.Label("💾 持久化", _sectionStyle);
+        GUILayout.Space(2);
+
+        if (GUILayout.Button("📀 保存配置（天机簿）", _buttonStyle, GUILayout.Height(26)))
+        {
+            if (PetConfig.Instance != null)
+            {
+                PetConfig.Instance.CollectAll();
+                PetConfig.Instance.Save();
+            }
+        }
+
+        if (GUILayout.Button("🗑 清空忆境", _buttonStyle, GUILayout.Height(26)))
+        {
+            if (PetMemory.Instance != null)
+                PetMemory.Instance.ClearMemories();
+        }
     }
 
     #endregion
@@ -856,6 +876,16 @@ public class ContextMenu : MonoBehaviour
         _pet.taskWeightMoveLeftTime = _wLeftTime;
         _pet.taskWeightMoveRightTime = _wRightTime;
         _pet.taskWeightStopTime = _wStop;
+
+        // 同步到 PetConfig 以便下次保存时包含最新权重
+        if (PetConfig.Instance != null)
+        {
+            PetConfig.Instance.data.weightLeftEdge = _wLeftEdge;
+            PetConfig.Instance.data.weightRightEdge = _wRightEdge;
+            PetConfig.Instance.data.weightLeftTime = _wLeftTime;
+            PetConfig.Instance.data.weightRightTime = _wRightTime;
+            PetConfig.Instance.data.weightStop = _wStop;
+        }
 
         Debug.Log($"[ContextMenu] 权重已应用 左边={_wLeftEdge} 右边={_wRightEdge} 左走={_wLeftTime} 右走={_wRightTime} 停止={_wStop}");
     }

@@ -109,8 +109,8 @@ Desktop_per_pro/
 │   │   │   ├── IPetRenderer.cs       # 渲染接口
 │   │   │   ├── HybridRenderer.cs     # 混合渲染器
 │   │   │   ├── Model3DRenderer.cs    # 3D 渲染器
-│   │   │   └── ToolCallInvoker.cs    # AI 工具调用分发（28+ 工具，含协程异步执行）
-│   │   ├── Animations/               # 3D 模型动画
+│   │   │   └── ToolCallInvoker.cs    # AI 工具调用分发（28+ 工具，含协程异步执行）│   │   │   ├── PetConfig.cs          # 天机簿 — 配置持久化（JSON保存/加载）
+│   │   │   ├── PetMemory.cs          # 忆境 — 长期记忆系统（记忆摘要+JSON持久）│   │   ├── Animations/               # 3D 模型动画
 │   │   ├── Editor/                   # 构建脚本
 │   │   ├── Live2D/Models/Fuxuan/     ← 符玄 Live2D 模型
 │   │   ├── Models/Fuxuan/            # 3D FBX 模型
@@ -133,6 +133,7 @@ DesktopPet (主控制器, Update order=0)
 ├── DragHandler          ← 鼠标交互 / 点击穿透
 ├── ChatBubble           ← 头顶气泡（含优先级系统）
 ├── ChatManager          ← AI 对话 + Function Calling + 逐句队列 + 协程调度
+│   └── 加载 Resources/SystemPrompt.txt + 注入 PetMemory 记忆
 ├── AutoChat             ← 自动闲聊 + 问候库
 ├── BottomInputBar       ← 底部输入栏
 ├── ContextMenu          ← 右键菜单
@@ -142,6 +143,8 @@ DesktopPet (主控制器, Update order=0)
 ├── PerformanceMonitor   ← FPS/CPU/内存监控
 ├── SystemTrayManager    ← 系统托盘图标
 ├── DebugWindow          ← 调试面板
+├── PetConfig            ← 天机簿 — 配置持久化（JSON保存/加载，重启时 ApplyAll）
+├── PetMemory            ← 忆境 — 长期记忆系统（自动记录关键交互，注入 system prompt）
 ├── WindowOverlay        ← 透明窗口（DWM 玻璃层）
 └── Live2DRenderer (IPetRenderer, Update order=801)
     └── CubismPhysicsController (order=800) ← 物理
@@ -181,6 +184,36 @@ ToolCallInvoker (协程工具注册表)
 ├── GetCoroutineResult()  → 获取异步执行结果
 └── IsCoroutineTool()     → 判断工具是否走协程
 ```
+
+### 🧠 长期记忆 + 配置持久化架构
+
+```
+PetMemory (忆境, 单例, DontDestroyOnLoad)
+├── AddMemory(summary, topic)  ← OnToolResult 自动调用
+│   └── 同话题冷却 120s 防重复
+├── GetFormattedMemories()      → 注入到 SystemPrompt
+├── Save() / Load()             → pet_memory.json
+└── ClearMemories()             → 右键菜单按钮
+
+PetConfig (天机簿, 单例, DontDestroyOnLoad)
+├── CollectAll()  ← 从 ChatManager/TimeWeatherController/DesktopPet 读取
+├── Save()        → pet_config.json
+├── Load()        ← 启动时自动加载
+└── ApplyAll()    → 写入各组件覆盖 Inspector 默认值
+
+ChatManager (SystemPrompt 注入流程)
+├── Resources/SystemPrompt.txt … 静态 prompt 模板
+├── {current_time} … 运行时替换为 DateTime.Now
+└── PetMemory.Instance?.GetFormattedMemories() … 追加到末尾
+```
+
+**三个系统的协作流程：**
+1. 启动 → PetConfig.Load() → PetConfig.ApplyAll() 恢复权重/API/天气
+2. 启动 → ChatManager.Awake() 加载 SystemPrompt.txt
+3. 对话 → BuildSystemPrompt() 替换 {current_time} + 注入记忆
+4. 工具调用 → OnToolResult → PetMemory.AddMemory() 自动记录
+5. 右键菜单「保存配置」→ PetConfig.CollectAll() + Save()
+6. 右键菜单「清空忆境」→ PetMemory.ClearMemories()
 
 **协程 vs 同步的分界策略：**
 - **同步执行**（23+ 个工具）：`open_url`、`take_screenshot`、`set_volume` 等瞬时完成的系统操作

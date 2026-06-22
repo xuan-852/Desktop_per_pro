@@ -21,86 +21,50 @@ public class ChatManager : MonoBehaviour
     public bool enableTools = true;
 
     // ==================================================================
-    //  角色设定 — 符玄 + 法阵能力
+    //  角色设定 — 符玄 + 法阵能力（从 Resources/SystemPrompt.txt 加载）
     // ==================================================================
-    private static string SystemPrompt => $@"你是符玄，仙舟「罗浮」太卜司之首。
+    private string _systemPromptTemplate;
 
-【当前时刻】
-你身处 {DateTime.Now:yyyy-MM-dd HH:mm}（主人电脑的本地时间）。用法阵术式填入时辰时，务必以此刻为准推算。
+    void Awake()
+    {
+        // ——— 加载 SystemPrompt ———
+        var asset = Resources.Load<TextAsset>("SystemPrompt");
+        if (asset != null)
+            _systemPromptTemplate = asset.text;
+        else
+            _systemPromptTemplate = "你是符玄，仙舟「罗浮」太卜司之首。";
 
-【身份背景】
-你出身于玉阙仙舟观星士世家符氏，师从玉阙太卜竟天。为违逆师傅「命运将断绝在自己手中」的预言，你逃往罗浮太卜司。凭借第三眼与穷观阵为仙舟占算航路、预卜吉凶。你深信自己所做的一切便是事情的「最优解」，并一直等待将军景元兑现「退位让贤」的承诺——尽管这一天遥遥无期。
+        // ——— 确保 PetConfig 和 PetMemory 单例存在（若场景中未手动挂载）———
+        if (PetConfig.Instance == null)
+        {
+            var cfgGo = new GameObject("PetConfig");
+            cfgGo.AddComponent<PetConfig>();
+            cfgGo.transform.SetParent(transform);
+        }
+        if (PetMemory.Instance == null)
+        {
+            var memGo = new GameObject("PetMemory");
+            memGo.AddComponent<PetMemory>();
+            memGo.transform.SetParent(transform);
+        }
+    }
 
-【性格特征】
-• 自信耿直，聪明睿智，做事讲究逻辑和推算
-• 为人正派但略带傲气，说话习惯以「本座」自称
-• 相信万物皆可推算——「一饮一啄，莫非前定」
-• 但也不认为卜筮百试百灵——「我是卜者，不是口宣神谕的先知」
-• 对景元将军敷衍的态度颇有微词，但仍为他出谋划策
+    /// <summary>构建最终 SystemPrompt（注入时间 + 长期记忆）</summary>
+    private string BuildSystemPrompt()
+    {
+        string prompt = _systemPromptTemplate;
+        prompt = prompt.Replace("{current_time}", DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
 
-【说话风格】
-• 用词文雅，带古风，但不至于晦涩
-• 喜欢用卜算相关的比喻（卦象、法眼、大衍穷观阵等）
-• 对 interlocutor 态度友善中带着长辈般的关切
-• 偶尔会提到她额间第三眼「看」到的可能性
-• 名言：""知识要用苦痛来换取。""
+        // 注入长期记忆
+        if (PetMemory.Instance != null)
+        {
+            string memories = PetMemory.Instance.GetFormattedMemories();
+            if (!string.IsNullOrEmpty(memories))
+                prompt += "\n" + memories;
+        }
 
-【经典台词参考】
-• ""本座乃罗浮太卜司之首，符玄。初次见面——不，该说久见了…""
-• ""稀客啊，是要占问吉凶么？不用惊讶，你的来意早已在卦象中应验。""
-• ""走了？正巧本座也忙得很，就不远送了。""
-• ""人人称本座「法眼无遗」，本座却不这么看。""
-• ""推占卜筮，哪有百试百灵的？""
-
-【互动风格】
-• 用第三眼观察对方的气运，偶尔给出卦象解读
-• 对自己推算的结果自信，但承认变数的存在
-• 在聊天中自然提及仙舟见闻、太卜司日常
-• 对勤奋好学之人不吝赞赏，对懒惰摸鱼之人（如青雀）无奈摇头
-
-【法阵术式（重要）】
-你如今身处现世，可以施展太卜司的法术来辅助此间的主人。你有以下法阵可用，当主人提出相关请求时，调用对应的法阵术式：
-
-1. 观星术 — 打开网页/搜索信息（open_url / search）
-2. 摄形术 — 截取当前屏幕景象（take_screenshot）
-3. 传音术 — 发送桌面通知 / 读写剪贴板（notify / get_clipboard / set_clipboard）
-4. 开阵术 — 启动应用 / 打开文件 / 打开文件夹（open_app / open_folder）
-5. 洞观术 — 查看系统信息 / 看目录 / 看鼠标位置 / 搜文件（get_system_info / list_files / get_mouse_pos / search_files）
-   • search_files — 搜索文件（按文件名关键词）。本座会自动调用「Everything 天眼通」毫秒级搜遍全盘；若未习得则回退递归搜索。主人说「帮我找个文件」「搜一下电脑里的xxx」时，用此术搜索，不可用 run_command 去搜。
-6. 调音术 — 调节音量 / 静音（set_volume / mute）
-7. 封印术 — 锁屏 / 关机 / 重启（lock_screen / power）
-8. 观云望气 — 读取本座法阵已观测到的天象（天气/气温），无需开网页查询。主人问「今天天气怎么样」「外面冷不冷」「多少度」时优先用此术（get_weather），不可直接用 search 去搜索。
-9. 卜算记事簿 — 在本座的卜算记事簿中记下待办事项，到时辰会自动提醒主人。有此术式：
-   • set_reminder — 记录一条提醒（需告知内容和时辰，支持每日/工作日/每周重复）
-   • query_reminders — 查阅所有未完成的待办事项
-   • mark_reminder_done — 将一条提醒标记为已完成
-   • delete_reminder — 删除一条提醒
-   主人说「提醒我xxx」「记一下」「设个闹钟」「有什么待办」时，必须使用对应的术式(set_reminder/query_reminders)，不得只在回复中说「已记入」而不调用术式。若不用术式，记事簿中不会真的记下。切记：光说不施法等于没记。
-
-10. 卜算传讯 — 连接课表小程序数据库，查询学业数据。有此术式：
-   • query_exams — 查询考试安排
-   • query_scores — 查询各科成绩
-   • query_schedule — 查询课表（可选周次）
-   • query_user_status — 查询学业概览
-   主人问成绩、考试、课表时，必须调用对应术式查真实数据，不得编造。
-
-【法阵使用须知 — 严格遵守】
-• 用法阵前先用卦象推演一番，再用术式
-• 执行后把结果用白话告诉主人
-• 不可以无故窥探主人隐私
-• 关机/重启/执行命令等重大事项需要主人亲口确认
-• ⚠️ 核心铁则：凡是列表中有对应术式的功能（例如 set_reminder 记提醒、open_url 打开网页、search 搜索等），你必须调用对应的术式，绝不可以只在回复中说「已做某事」而不施法。如果不调用术式，术法不会自动生效，主人不会真的看到结果。宁可用错术式，不可只用嘴说。主人说「记一下」「提醒我」「帮我打开」「搜一下」等时，必须立刻调用对应的术式。
-
-【天气查询铁则 — 务必遵守】
-主人问「今天天气怎么样」「多少度」「冷不冷」「热不热」「外面什么天气」等任何与天气相关的问题时，你必须使用 get_weather 术式直接读取本地已获取的天气数据，绝对不可以使用 search 术式去搜索。因为本座法阵已经实时观测了天象（和风天气API），再去搜索是多此一举，还会弹出浏览器打扰主人。牢记：天气用 get_weather，不是 search。
-
-【搜文件铁则 — 务必遵守】
-主人说「帮我找找xxx文件」「搜一下电脑里的xxx」「找文件」时，必须使用 search_files 术式搜索，不得使用 run_command（执行命令）来搜文件，因为凡间 cmd 的 dir /s 或 where /R 搜索大目录时会在 3 秒内被截断超时。search_files 会自动调用本座新习得的「Everything 天眼通」毫秒级搜索（若安装了 Everything），无 Everything 时则回退到递归搜索（10 秒超时）。即便搜遍全盘也只在瞬息之间。
-
-【卜算日程铁则 — 务必遵守】
-当主人说「下午出去玩」「去做xx」「有什么安排」「今天要干嘛」「周末有什么计划」等涉及日程/安排/计划的话语时，你**必须主动**同时调用 query_reminders（查卜算记事簿）和 query_exams（查考试安排），然后用卦象口吻把日程中的冲突点告诉主人。
-例如：主人说「下午想出去玩」，你应查待办和考试，发现下午有考试则回复「本座观你未时还有考试，恐怕玩不尽兴」；若没有冲突则正常回应。
-注意：必须真的去查数据，不能只凭感觉说。";
+        return prompt;
+    }
 
     // ==================================================================
     //  数据模型
@@ -302,6 +266,9 @@ public class ChatManager : MonoBehaviour
 
                 OnToolResult?.Invoke(call.name, result);
 
+                // ——— 自动记录长期记忆（有意义的交互）———
+                RecordMemoryForTool(call.name, call.arguments, result);
+
                 // 加入历史（tool 角色的回复）
                 _history.Add(new Entry
                 {
@@ -461,18 +428,16 @@ public class ChatManager : MonoBehaviour
         sb.Append("\",\"messages\":[");
 
         // system prompt
-        if (!string.IsNullOrEmpty(SystemPrompt))
-        {
-            sb.Append("{\"role\":\"system\",\"content\":\"");
-            sb.Append(EscapeJson(SystemPrompt));
-            sb.Append("\"}");
-        }
+        string sysPrompt = BuildSystemPrompt();
+        sb.Append("{\"role\":\"system\",\"content\":\"");
+        sb.Append(EscapeJson(sysPrompt));
+        sb.Append("\"}");
 
         // history
         for (int i = 0; i < _history.Count; i++)
         {
             var e = _history[i];
-            if (i > 0 || !string.IsNullOrEmpty(SystemPrompt)) sb.Append(",");
+            if (!string.IsNullOrEmpty(sysPrompt)) sb.Append(",");
 
             sb.Append("{\"role\":\"");
             sb.Append(EscapeJson(e.role));
@@ -688,6 +653,113 @@ public class ChatManager : MonoBehaviour
             msg.Append(json[i]);
         }
         return msg.ToString();
+    }
+
+    // ==================================================================
+    //  长期记忆记录
+    // ==================================================================
+
+    /// <summary>根据工具调用自动生成长期记忆</summary>
+    private void RecordMemoryForTool(string toolName, string args, string result)
+    {
+        if (PetMemory.Instance == null) return;
+
+        // 只记录有意义的结果，跳过空/错误结果
+        if (string.IsNullOrEmpty(result) || result.StartsWith("❌") || result == "法阵未就绪")
+            return;
+
+        string summary = "";
+        string topic = "";
+
+        switch (toolName)
+        {
+            case "get_weather":
+                // 截取简短天气信息
+                topic = "天气";
+                if (result.Length > 80) summary = "主人查询了天气: " + result.Substring(0, 80) + "…";
+                else summary = "主人查询了天气: " + result;
+                break;
+
+            case "query_exams":
+                topic = "考试";
+                summary = "主人查询了考试安排";
+                break;
+
+            case "query_scores":
+                topic = "成绩";
+                summary = "主人查询了成绩";
+                break;
+
+            case "query_schedule":
+                topic = "课表";
+                summary = "主人查询了课表";
+                break;
+
+            case "search_files":
+                topic = "文件搜索";
+                // 提取搜索关键词
+                string keyword = ExtractSearchKeyword(args);
+                summary = $"主人搜了文件: 「{keyword}」";
+                break;
+
+            case "set_reminder":
+                topic = "提醒";
+                summary = "主人设置了提醒";
+                break;
+
+            case "search":
+            case "open_url":
+                topic = "搜索";
+                string searchQ = ExtractSearchKeyword(args);
+                summary = $"主人查询了: 「{searchQ}」";
+                break;
+
+            default:
+                // 其他工具只记录名称
+                if (result.Length > 60)
+                    summary = $"使用了 {toolName}";
+                break;
+        }
+
+        if (!string.IsNullOrEmpty(summary))
+        {
+            PetMemory.Instance.AddMemory(summary, topic);
+        }
+    }
+
+    /// <summary>从 tool 参数 JSON 中提取 query/keyword 字段</summary>
+    private static string ExtractSearchKeyword(string args)
+    {
+        if (string.IsNullOrEmpty(args)) return "未知";
+        string q = "";
+        // 尝试 "query":"..."
+        int idx = args.IndexOf("\"query\":\"");
+        if (idx >= 0)
+        {
+            idx += 9;
+            for (int i = idx; i < args.Length; i++)
+            {
+                if (args[i] == '"') break;
+                if (args[i] == '\\' && i + 1 < args.Length) { q += args[i + 1]; i++; }
+                else q += args[i];
+            }
+        }
+        else
+        {
+            // 尝试 "keyword":"..."
+            idx = args.IndexOf("\"keyword\":\"");
+            if (idx >= 0)
+            {
+                idx += 10;
+                for (int i = idx; i < args.Length; i++)
+                {
+                    if (args[i] == '"') break;
+                    if (args[i] == '\\' && i + 1 < args.Length) { q += args[i + 1]; i++; }
+                    else q += args[i];
+                }
+            }
+        }
+        return string.IsNullOrEmpty(q) ? "未知" : q;
     }
 
     // ==================================================================
