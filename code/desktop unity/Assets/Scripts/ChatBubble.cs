@@ -43,6 +43,11 @@ public class ChatBubble : MonoBehaviour
     public Color textColor = new Color(0.95f, 0.92f, 0.97f);       // 浅紫白文字
     public Color shadowColor = new Color(0f, 0f, 0f, 0.25f);
 
+    [Header("古风紫纹装饰")]
+    public Color ornamentColor = new Color(0.72f, 0.48f, 0.84f, 0.60f); // 角饰色 ★ 提亮
+    public Color starColor = new Color(0.85f, 0.65f, 0.95f, 1.0f);      // 星点色 ★★★ 满透明度
+    public float ornamentSize = 28f;                                     // 角饰大小 ★ 放大
+
     // ============ 优先级系统 ============
     /// <summary>当前显示消息的优先级</summary>
     private MsgPriority _currentPriority = MsgPriority.Low;
@@ -72,7 +77,26 @@ public class ChatBubble : MonoBehaviour
     private Texture2D _shadowTex;     // 圆角矩形（阴影）
     private Texture2D _tailTex;       // 三角形小尾巴
     private Texture2D _accentTex;     // 1x1 紫色装饰条
+    private Texture2D _ornamentTL;    // 左上角云纹
+    private Texture2D _ornamentBR;    // 右下角云纹
+    private Texture2D _starGlowTex;   // 单颗星发光点
     private GUIStyle _textStyle;
+
+    // 闪烁星点数据：[x归一化, y归一化, 大小px, 闪烁速度, 相位偏移]
+    private static readonly float[][] _starData = new float[][] {
+        new float[]{0.12f, 0.18f, 8f, 2.5f, 0.0f},
+        new float[]{0.85f, 0.12f, 7f, 1.8f, 1.2f},
+        new float[]{0.20f, 0.80f, 9f, 3.0f, 0.8f},
+        new float[]{0.75f, 0.78f, 6f, 2.0f, 2.1f},
+        new float[]{0.50f, 0.22f, 5f, 1.5f, 3.5f},
+        new float[]{0.08f, 0.50f, 8f, 2.8f, 0.3f},
+        new float[]{0.95f, 0.55f, 6f, 2.2f, 1.8f},
+        new float[]{0.32f, 0.50f, 5f, 3.2f, 2.7f},
+        new float[]{0.68f, 0.35f, 7f, 1.2f, 4.0f},
+        new float[]{0.50f, 0.65f, 6f, 2.6f, 0.9f},
+        new float[]{0.40f, 0.08f, 5f, 3.5f, 1.5f},
+        new float[]{0.62f, 0.88f, 6f, 1.9f, 3.1f},
+    };
     private bool _needsRebuild = true;
 
     void Start()
@@ -242,6 +266,39 @@ public class ChatBubble : MonoBehaviour
         GUI.color = new Color(accentColor.r, accentColor.g, accentColor.b, 0.75f * alpha);
         GUI.DrawTexture(new Rect(bgRect.x + 5, bgRect.y + 2, bgRect.width - 10, 3f), _accentTex);
 
+        // ——— 左上角云纹 ———
+        if (_ornamentTL != null)
+        {
+            GUI.color = new Color(ornamentColor.r, ornamentColor.g, ornamentColor.b, ornamentColor.a * alpha);
+            GUI.DrawTexture(new Rect(bgRect.x + 3, bgRect.y + 5, ornamentSize, ornamentSize), _ornamentTL);
+        }
+
+        // ——— 右下角云纹（水平翻转 = 镜像） ———
+        if (_ornamentBR != null)
+        {
+            GUI.color = new Color(ornamentColor.r, ornamentColor.g, ornamentColor.b, ornamentColor.a * alpha);
+            GUI.DrawTexture(new Rect(bgRect.x + bgRect.width - 3 - ornamentSize, bgRect.y + bgRect.height - 3 - ornamentSize, ornamentSize, ornamentSize), _ornamentBR);
+        }
+
+        // ——— 闪烁星点（每颗独立呼吸动画） ———
+        if (_starGlowTex != null)
+        {
+            foreach (var s in _starData)
+            {
+                // 强烈脉冲闪烁：0.0 → 1.0 → 0.0，每颗星独立节奏
+                float sinVal = Mathf.Sin(Time.time * s[3] + s[4]);
+                float pulse = sinVal * sinVal; // 平方让峰值更尖锐，谷值归零
+                float twinkle = Mathf.Lerp(0.05f, 1.0f, pulse);
+                float starA = starColor.a * alpha * twinkle;
+                if (starA < 0.02f) continue;
+                float starSz = s[2];
+                float px = bgRect.x + s[0] * bgRect.width - starSz / 2f;
+                float py = bgRect.y + s[1] * bgRect.height - starSz / 2f;
+                GUI.color = new Color(starColor.r, starColor.g, starColor.b, starA);
+                GUI.DrawTexture(new Rect(px, py, starSz, starSz), _starGlowTex);
+            }
+        }
+
         // ——— 小尾巴（气泡底部中央朝下） ———
         float tailX = (bx + _bubbleWidth / 2f) - tailWidth / 2f;
         float tailY = bgRect.y + bgRect.height;
@@ -291,6 +348,9 @@ public class ChatBubble : MonoBehaviour
         _shadowTex = GenRoundedRect(w, h, r, new Color(0f, 0f, 0f, 0.22f));
         _accentTex = MakeTex(1, 1, accentColor);
         _tailTex = GenTriangle(Mathf.RoundToInt(tailWidth), Mathf.RoundToInt(tailHeight), bgColor);
+        _ornamentTL = GenCornerOrnament(Mathf.RoundToInt(ornamentSize), ornamentColor, true);
+        _ornamentBR = GenCornerOrnament(Mathf.RoundToInt(ornamentSize), ornamentColor, false);
+        _starGlowTex = GenStarGlow(24, starColor);
     }
 
     // ---------- 圆角矩形 ----------
@@ -355,6 +415,59 @@ public class ChatBubble : MonoBehaviour
         for (int x = 0; x < w; x++)
             for (int y = 0; y < h; y++)
                 tex.SetPixel(x, y, c);
+        tex.Apply();
+        return tex;
+    }
+
+    // ---------- 角落云纹图案（古风卷草纹，加粗显眼版） ----------
+
+    private static Texture2D GenCornerOrnament(int size, Color c, bool topLeft)
+    {
+        var tex = new Texture2D(size, size, TextureFormat.ARGB32, false);
+        Color t = new Color(0, 0, 0, 0);
+
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float px = topLeft ? x : (size - 1f - x);
+                float py = topLeft ? y : (size - 1f - y);
+                // 距离角落的归一化距离
+                float d = Mathf.Sqrt((px * px + py * py) / (2f * (size - 1f) * (size - 1f)));
+                float angle = Mathf.Atan2(py + 0.01f, px + 0.01f);
+                // 螺旋卷草：粗线条 + 高对比
+                float spiral = Mathf.Sin(angle * 3f + d * 10f) * 0.5f + 0.5f;
+                float alphaMask = Mathf.Clamp01((1f - d) * 1.8f - 0.5f);
+                float val = Mathf.Pow(spiral * alphaMask, 0.6f);
+                // 降低阈值让更多像素显示，加粗线条
+                bool draw = val > 0.20f && d < 0.85f;
+                float a = draw ? Mathf.Clamp01(val * 1.5f) * c.a : 0f;
+                tex.SetPixel(x, y, draw ? new Color(c.r, c.g, c.b, a) : t);
+            }
+        }
+        tex.Apply();
+        return tex;
+    }
+
+    // ---------- 单颗星发光点纹理（高斯光晕，亮核版） ----------
+
+    private static Texture2D GenStarGlow(int size, Color c)
+    {
+        var tex = new Texture2D(size, size, TextureFormat.ARGB32, false);
+        Color t = new Color(0, 0, 0, 0);
+        float cx = (size - 1f) / 2f;
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float dx = (x - cx) / cx;
+                float dy = (y - cx) / cx;
+                float dist = Mathf.Sqrt(dx * dx + dy * dy);
+                float brightness = Mathf.Exp(-dist * dist * 2.5f);
+                float a = Mathf.Clamp01(brightness) * c.a;
+                tex.SetPixel(x, y, a > 0.01f ? new Color(c.r, c.g, c.b, a) : t);
+            }
+        }
         tex.Apply();
         return tex;
     }

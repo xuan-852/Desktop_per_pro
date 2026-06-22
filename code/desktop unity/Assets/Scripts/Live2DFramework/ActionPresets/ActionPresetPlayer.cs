@@ -144,7 +144,41 @@ public class ActionPresetPlayer
     {
         _isPlaying = true;
 
-        // 1. Global fade in — 受影响的参数从当前值平滑过渡到 Phase1 起始值
+        // 手动驱动子迭代器 GetPlaySteps，以便能捕获异常
+        // 注意：C# 不允许在 try-catch 块内使用 yield return (CS1626)，
+        // 因此用 yield return current; 在 try 块之外，MoveNext() 在 try 块之内
+        var steps = GetPlaySteps(data);
+        if (steps != null)
+        {
+            while (true)
+            {
+                object current;
+                try
+                {
+                    if (!steps.MoveNext())
+                        break;
+                    current = steps.Current;
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[ActionPresetPlayer] 动作 '{data.name}' 播放异常: {ex.Message}\n{ex.StackTrace}");
+                    break;
+                }
+                yield return current;
+            }
+        }
+
+        // ★ 必须释放锁：无论是否异常，都确保 onComplete 被调用，防止宠物永久卡死
+        _isPlaying = false;
+        CurrentAction = null;
+        _currentCoroutine = null;
+        onComplete?.Invoke();
+    }
+
+    /// <summary>实际的播放步骤（可抛异常，由 PlayRoutine 捕获）</summary>
+    private IEnumerator GetPlaySteps(ActionData data)
+    {
+        // 1. Global fade in
         if (data.globalFadeIn > 0.001f && data.phases.Length > 0 && data.phases[0].targets.Length > 0)
         {
             yield return FadeToTargets(data.phases[0], data.globalFadeIn);
@@ -153,21 +187,14 @@ public class ActionPresetPlayer
         // 2. 依次播放每个 Phase
         for (int i = 0; i < data.phases.Length; i++)
         {
-            var phase = data.phases[i];
-            yield return PlayPhase(phase);
+            yield return PlayPhase(data.phases[i]);
         }
 
-        // 3. Global fade out — 受影响的参数淡出到默认值
+        // 3. Global fade out
         if (data.globalFadeOut > 0.001f)
         {
             yield return FadeToDefault(data, data.globalFadeOut);
         }
-
-        // 完成
-        _isPlaying = false;
-        CurrentAction = null;
-        _currentCoroutine = null;
-        onComplete?.Invoke();
     }
 
     /// <summary>淡入到 Phase 的目标值</summary>

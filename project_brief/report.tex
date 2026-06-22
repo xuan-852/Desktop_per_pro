@@ -924,6 +924,33 @@ High   & 2 & AI 主动回复 \\
     \item 外部可通过 \texttt{IsShowingHighPriority} 属性查询当前是否为高优先级展示
 \end{itemize}
 
+\subsection{气泡古风装饰}
+
+气泡在功能之外增加了符玄主题的视觉装饰，全部代码生成，无需额外贴图资源：
+
+\subsubsection{紫色云纹角饰}
+\begin{itemize}
+    \item 左上角 + 右下角各一朵紫色卷草云纹
+    \item 使用极坐标螺旋算法：$\text{val} = \sin(\theta \times 3 + d \times 10)$
+    \item 从角落沿对角线渐变，加粗线条 + 高对比度
+    \item 角饰大小 28px，透明度 60\%，颜色 $(0.72, 0.48, 0.84)$
+\end{itemize}
+
+\subsubsection{闪烁星点系统}
+\begin{itemize}
+    \item 12 颗独立星星散布在气泡表面，每颗拥有不同的大小、闪烁速度和相位
+    \item 每帧实时呼吸动画：$\text{pulse} = \sin^2(t \cdot \text{speed} + \text{phase})$，谷值接近熄灭，峰值全亮
+    \item 每颗星使用高斯光晕纹理渲染（$e^{-3r^2}$ 衰减）
+    \item 尺寸 5--9px，颜色浅紫 $(0.85, 0.65, 0.95)$，满透明度
+    \item 闪烁速度 1.2--3.5 Hz 随机分布，产生此起彼伏的星空效果
+\end{itemize}
+
+\subsubsection{紫色装饰线}
+\begin{itemize}
+    \item 气泡顶部一条 $3\text{px}$ 高的水平紫色线条（同 accentColor）
+    \item 距顶部 2px，左右留白 5px，透明度 75\%
+\end{itemize}
+
 % ═══════════════════════════════════════════
 \section{动画详述}
 % ═══════════════════════════════════════════
@@ -1156,7 +1183,14 @@ Desktop_per_pro/
            &       & 修复文件搜索 3s 超时：创建专用 search\_files 工具（10s 超时）\\
            &       & ToolCallInvoker 工具扩展至 28+ 个\\
            &       & 新增 FindEverythingCli() 自动检测 es.exe\\
-           &       & 新增 SearchRecursive() 递归回退搜索
+           &       & 新增 SearchRecursive() 递归回退搜索\\
+2026-06-22 & N18  & \textbf{气泡古风紫纹装饰系统}\\
+           &       & 待机气泡语料池大幅扩充：10$\to$46 条符玄风格台词（卜卦/穷观阵/青雀/景元/罗浮等）\\
+           &       & 天气/时段气泡全部翻倍：凌晨 5$\to$10、夜间 4$\to$10、早晨 4$\to$10\\
+           &       & 雷雨 3$\to$7、雪天 3$\to$8、晴天 4$\to$10\\
+           &       & 气泡紫色云纹角饰（左上+右下，螺旋算法代码生成）\\
+           &       & 12 颗独立呼吸闪烁星点（$\sin^2$ 脉冲 + 高斯光晕，每颗独立频率相位）\\
+           &       & 气泡顶部紫色装饰线 3px\\
 \bottomrule
 \end{tabular}
 \end{table}

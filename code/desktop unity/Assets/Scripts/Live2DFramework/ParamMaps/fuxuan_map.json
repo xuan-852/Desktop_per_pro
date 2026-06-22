@@ -98,5 +98,10 @@
     {"s": "camera_x",                "p": "Param155", "d": "CDI:镜头 X"},
     {"s": "camera_y",                "p": "Param156", "d": "CDI:镜头Y"},
     {"s": "character_scale",         "p": "Param157", "d": "CDI:人物缩小放大"},
+    {"s": "star_visibility",         "p": "Param451", "d": "CDI:星显隐（0隐藏→1显示）"},
+    {"s": "star_size",               "p": "Param541", "d": "CDI:星大小"},
+    {"s": "star_outer_scale",        "p": "Param1071", "d": "CDI:外围星变大"},
+    {"s": "star_outer_appear",       "p": "Param1081", "d": "CDI:外星出现"},
+    {"s": "star_plate_transparency", "p": "Param154", "d": "CDI:七星盘 透明"}
   ]
 }
