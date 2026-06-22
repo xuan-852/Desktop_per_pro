@@ -46,6 +46,7 @@
 ### 🤖 AI 聊天
 - **DeepSeek API** — 集成 DeepSeek Chat + Function Calling，最多 5 轮工具调用循环
 - **28+ 工具** — 打开网页、搜索、搜文件（Everything 毫秒级）、截图、调音量、记便签、查天气、查成绩、查课表、查考试、学业概览、切换表情、播放动作等
+- **协程异步执行** — 5 个网络 IO/后台工具（学业查询 + 文件搜索）通过 Unity 协程异步执行，不阻塞主线程
 - **Everything 文件搜索** — AI 可通过「帮我找文件」调用 `search_files` 工具，优先使用 Everything CLI（es.exe）实现全盘毫秒级搜索，未安装时自动回退递归搜索
 - **小程序数据互通** — 连接微信课表小程序服务端，实时查询学业数据
 - **AI 操控角色** — 直接说"换个开心表情""伸个懒腰"，AI 自动调用表情/动作工具
@@ -95,7 +96,7 @@ Desktop_per_pro/
 │   │   │   ├── DragHandler.cs        # 拖拽/点击交互
 │   │   │   ├── TimeWeatherController.cs  # 昼夜/天气
 │   │   │   ├── ChatBubble.cs         # 头顶气泡（含优先级系统）
-│   │   │   ├── ChatManager.cs        # AI 对话 + Function Calling
+│   │   │   ├── ChatManager.cs        # AI 对话 + Function Calling + 协程工具调度
 │   │   │   ├── AutoChat.cs           # 自动闲聊
 │   │   │   ├── BottomInputBar.cs     # 底部输入栏
 │   │   │   ├── ContextMenu.cs        # 右键菜单（设置/动作/聊天/便签）
@@ -108,7 +109,7 @@ Desktop_per_pro/
 │   │   │   ├── IPetRenderer.cs       # 渲染接口
 │   │   │   ├── HybridRenderer.cs     # 混合渲染器
 │   │   │   ├── Model3DRenderer.cs    # 3D 渲染器
-│   │   │   └── ToolCallInvoker.cs    # AI 工具调用分发（28+ 工具）
+│   │   │   └── ToolCallInvoker.cs    # AI 工具调用分发（28+ 工具，含协程异步执行）
 │   │   ├── Animations/               # 3D 模型动画
 │   │   ├── Editor/                   # 构建脚本
 │   │   ├── Live2D/Models/Fuxuan/     ← 符玄 Live2D 模型
@@ -131,7 +132,7 @@ Desktop_per_pro/
 DesktopPet (主控制器, Update order=0)
 ├── DragHandler          ← 鼠标交互 / 点击穿透
 ├── ChatBubble           ← 头顶气泡（含优先级系统）
-├── ChatManager          ← AI 对话 + Function Calling + 逐句队列
+├── ChatManager          ← AI 对话 + Function Calling + 逐句队列 + 协程调度
 ├── AutoChat             ← 自动闲聊 + 问候库
 ├── BottomInputBar       ← 底部输入栏
 ├── ContextMenu          ← 右键菜单
@@ -150,6 +151,41 @@ DesktopPet (主控制器, Update order=0)
 1. `DesktopPet.Update(0)` → 状态更新（位置、速度、行走相位）
 2. `CubismPhysicsController.Update(800)` → 衣服/头发物理模拟
 3. `Live2DRenderer.LateUpdate(801)` → 覆盖被物理重置的参数 + 空闲动画 + 交互反馈
+
+### ⚡ 协程异步工具架构
+
+AI 工具调用中，网络 IO 型工具（5 个）通过 Unity 协程异步执行，不阻塞主线程：
+
+```
+ChatManager.SendMessage()
+  └─ StartCoroutine(SendRequestCoroutine())
+       └─ StartCoroutine(DoToolLoop())   ← 最多 5 轮 tool_call 循环
+            ├─ StartCoroutine(PostRequest())  ← HTTP 请求
+            ├─ 解析 tool_calls
+            ├─ IsCoroutineTool()? ═╗
+            │   YES ──→ StartCoroutine(ToolCallInvoker.ExecuteCoroutine())
+            │   NO  ──→ Execute() 同步执行
+            └─ 继续下一轮 / 结束
+
+ToolCallInvoker (协程工具注册表)
+├── RegisterCoroutineTools()
+│   ├── query_exams       → RunAsyncTool(ServerPollService.QueryUpcomingExamsAsync)
+│   ├── query_scores      → RunAsyncTool(ServerPollService.QueryScoresAsync)
+│   ├── query_schedule    → RunAsyncTool(ServerPollService.QueryScheduleAsync)
+│   ├── query_user_status → RunAsyncTool(ServerPollService.QueryUserStatusAsync)
+│   └── search_files      → RunAsyncTool(Task.Run → SearchFilesTask)
+│
+├── RunAsyncTool(Func<Task<string>>)
+│   └── 每帧 yield return null 检查 task.IsCompleted ← 非阻塞
+│
+├── GetCoroutineResult()  → 获取异步执行结果
+└── IsCoroutineTool()     → 判断工具是否走协程
+```
+
+**协程 vs 同步的分界策略：**
+- **同步执行**（23+ 个工具）：`open_url`、`take_screenshot`、`set_volume` 等瞬时完成的系统操作
+- **协程异步执行**（5 个工具）：`query_exams`、`query_scores`、`query_schedule`、`query_user_status`、`search_files` —— 涉及 HTTP 请求或后台线程文件搜索，可能耗时数百毫秒到数秒
+- `RunAsyncTool` 将 `async Task` 包装为协程，每帧检测 `IsCompleted`，不阻塞 Unity 主线程
 
 ## 🔧 开发环境
 

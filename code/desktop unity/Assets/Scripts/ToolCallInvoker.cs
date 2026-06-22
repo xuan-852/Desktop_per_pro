@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -6,6 +7,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using UnityEngine;
+using UnityEngine.Networking;
 
 /// <summary>
 /// 符玄「法阵」— 工具调用执行器
@@ -27,6 +29,7 @@ public class ToolCallInvoker : MonoBehaviour
     void Awake()
     {
         RegisterAllTools();
+        RegisterCoroutineTools();
     }
 
     // ================================================================
@@ -601,7 +604,7 @@ public class ToolCallInvoker : MonoBehaviour
     //  对外接口
     // ================================================================
 
-    /// <summary>获取工具的 JSON 定义（用于 API 请求中的 tools 参数）</summary>
+    /// <summary>获取工具的 JSON 定义</summary>
     public string GetToolsJson()
     {
         // language=json
@@ -628,7 +631,7 @@ public class ToolCallInvoker : MonoBehaviour
       ""parameters"": {
         ""type"": ""object"",
         ""properties"": {
-          ""name"": { ""type"": ""string"", ""description"": ""应用名称或文件路径，如 calc、notepad、D:\\path\\file.txt"" }
+          ""name"": { ""type"": ""string"", ""description"": ""应用名称或文件路径，如 calc、notepad、D:\path\file.txt"" }
         },
         ""required"": [""name""]
       }
@@ -971,6 +974,158 @@ public class ToolCallInvoker : MonoBehaviour
     }
   }
 ]";
+    }
+
+    // ================================================================
+    //  协程工具执行器（非阻塞，用于网络/IO 类工具）
+    // ================================================================
+
+    /// <summary>协程工具注册表</summary>
+    private Dictionary<string, Func<string, IEnumerator>> _coroutineExecutors;
+
+    /// <summary>当前协程工具的执行结果</summary>
+    private string _coroutineResult;
+
+    private void RegisterCoroutineTools()
+    {
+        _coroutineExecutors = new Dictionary<string, Func<string, IEnumerator>>
+        {
+            ["query_exams"]       = args => RunAsyncTool(() => FindObjectOfType<ServerPollService>()?.QueryUpcomingExamsAsync() ?? Task.FromResult("❌ 课表传讯服务未就绪")),
+            ["query_scores"]      = args => RunAsyncTool(() => FindObjectOfType<ServerPollService>()?.QueryScoresAsync() ?? Task.FromResult("❌ 课表传讯服务未就绪")),
+            ["query_schedule"]    = args => RunAsyncTool(() =>
+            {
+                int week = 0;
+                int.TryParse(JsonRead(args, "week"), out week);
+                return FindObjectOfType<ServerPollService>()?.QueryScheduleAsync(week) ?? Task.FromResult("❌ 课表传讯服务未就绪");
+            }),
+            ["query_user_status"] = args => RunAsyncTool(() => FindObjectOfType<ServerPollService>()?.QueryUserStatusAsync() ?? Task.FromResult("❌ 课表传讯服务未就绪")),
+            ["search_files"]      = args => RunAsyncTool(() => SearchFilesTask(args)),
+        };
+    }
+
+    /// <summary>判断工具是否应走协程执行</summary>
+    public bool IsCoroutineTool(string name) => _coroutineExecutors?.ContainsKey(name) ?? false;
+
+    /// <summary>协程方式执行工具，不阻塞主线程</summary>
+    public IEnumerator ExecuteCoroutine(string name, string argsJson)
+    {
+        _coroutineResult = null;
+        if (_coroutineExecutors.TryGetValue(name, out var executor))
+        {
+            yield return executor(argsJson);
+        }
+        else
+        {
+            _coroutineResult = Execute(name, argsJson, out _);
+        }
+    }
+
+    /// <summary>获取最近一次协程工具的执行结果</summary>
+    public string GetCoroutineResult() => _coroutineResult;
+
+    /// <summary>将 async Task 包装为非阻塞协程</summary>
+    private IEnumerator RunAsyncTool(Func<Task<string>> taskFactory)
+    {
+        var task = taskFactory();
+        // 每帧检查是否完成，不阻塞主线程
+        while (!task.IsCompleted)
+        {
+            yield return null;
+        }
+
+        if (task.IsFaulted)
+        {
+            _coroutineResult = $"❌ 执行出错: {task.Exception?.InnerException?.Message ?? task.Exception?.Message}";
+        }
+        else
+        {
+            _coroutineResult = task.Result;
+        }
+    }
+
+    /// <summary>search_files 的 async 版本（在后台线程运行）</summary>
+    private Task<string> SearchFilesTask(string args)
+    {
+        return Task.Run(() =>
+        {
+            // 直接将原来同步版的逻辑搬过来
+            string query = JsonRead(args, "query");
+            string rootDir = JsonRead(args, "root");
+            if (string.IsNullOrEmpty(query)) return "❌ 未说要搜什么";
+
+            string esExe = FindEverythingCli();
+            bool useEverything = esExe != null;
+
+            try
+            {
+                var results = new List<string>();
+
+                if (useEverything)
+                {
+                    try
+                    {
+                        string esArgs = $"-n 200 \"{query.Replace("\"", "\\\"")}\"";
+                        if (!string.IsNullOrEmpty(rootDir))
+                            esArgs = $"-n 200 -path \"{rootDir.Replace("\"", "\\\"")}\" \"{query.Replace("\"", "\\\"")}\"";
+
+                        var psi = new ProcessStartInfo(esExe, esArgs)
+                        {
+                            UseShellExecute = false,
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            CreateNoWindow = true,
+                            StandardOutputEncoding = Encoding.UTF8,
+                            StandardErrorEncoding = Encoding.UTF8
+                        };
+                        var p = Process.Start(psi);
+                        if (p != null)
+                        {
+                            string output = p.StandardOutput.ReadToEnd();
+                            p.WaitForExit(3000);
+                            var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                            foreach (var line in lines)
+                                if (!string.IsNullOrWhiteSpace(line)) results.Add(line);
+                        }
+                    }
+                    catch { useEverything = false; }
+                }
+
+                if (!useEverything)
+                {
+                    try
+                    {
+                        if (string.IsNullOrEmpty(rootDir))
+                            rootDir = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+                        if (Directory.Exists(rootDir))
+                            SearchRecursive(rootDir, query, results, 200);
+                    }
+                    catch (Exception ex)
+                    {
+                        results.Add($"⚠️ 搜索中断：{ex.Message}");
+                    }
+                }
+
+                if (results.Count == 0)
+                {
+                    string scope = useEverything
+                        ? (string.IsNullOrEmpty(rootDir) ? "本座的天眼所及之处" : $"「{rootDir}」")
+                        : (string.IsNullOrEmpty(rootDir) ? "桌面" : $"「{rootDir}」");
+                    return $"🔍 在{scope}中未找到与「{query}」匹配的文件";
+                }
+
+                string method = useEverything ? "⚡本座以 Everything 天眼通搜" : "🔍本座以递归之法搜";
+                string scope2 = string.IsNullOrEmpty(rootDir) ? "全境" : $"「{rootDir}」";
+                var sb = new StringBuilder();
+                sb.AppendLine($"{method}{scope2}，得 {results.Count} 件与「{query}」相关之物：");
+                foreach (var f in results)
+                    sb.AppendLine($"  📄 {f}");
+                return sb.ToString().Truncate(2000);
+            }
+            catch (Exception e)
+            {
+                return $"❌ 搜索时出了岔子：{e.Message}";
+            }
+        });
     }
 
     /// <summary>执行工具调用</summary>

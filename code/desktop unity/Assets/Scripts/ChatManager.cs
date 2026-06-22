@@ -284,10 +284,19 @@ public class ChatManager : MonoBehaviour
 
                 Debug.Log($"[ChatManager] ⚡ 施法: {call.name}({call.arguments})");
 
-                // 执行
-                string result = toolInvoker
-                    ? toolInvoker.Execute(call.name, call.arguments, out _)
-                    : "法阵未就绪";
+                // 执行（协程工具异步，其余同步）
+                string result;
+                if (toolInvoker && toolInvoker.IsCoroutineTool(call.name))
+                {
+                    yield return StartCoroutine(toolInvoker.ExecuteCoroutine(call.name, call.arguments));
+                    result = toolInvoker.GetCoroutineResult();
+                }
+                else
+                {
+                    result = toolInvoker
+                        ? toolInvoker.Execute(call.name, call.arguments, out _)
+                        : "法阵未就绪";
+                }
 
                 Debug.Log($"[ChatManager] 📜 结果: {result}");
 

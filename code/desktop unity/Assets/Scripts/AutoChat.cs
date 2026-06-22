@@ -174,6 +174,10 @@ public class AutoChat : MonoBehaviour
         if (_bubble == null) return;
         if (string.IsNullOrEmpty(sentence)) return;
 
+        // 🛡 SkipSentenceAnimation 触发的全文(idx >= total)跳过——
+        // 气泡已显示最后一句，不需要用全文覆盖
+        if (idx >= total) return;
+
         // 第一句：用高优先级启动气泡（不可被闲话覆盖）
         // 后续句子：仅更新文本，延长显示时间
         if (idx == 0)
