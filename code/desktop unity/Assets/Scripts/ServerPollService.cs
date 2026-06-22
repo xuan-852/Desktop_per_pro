@@ -191,34 +191,47 @@ public class ServerPollService : MonoBehaviour
                     DateTime.TryParse($"{dateStr} {timeStr}", out examTime);
                 }
 
-                // 添加多条复习提醒：examRemindDays 天前开始每天一条
-                for (int i = examRemindDays; i > 0; i--)
+                // ═══ 去重：检查是否已有同课程名的待办提醒 ═══
+                // 场景：用户可能在考试安排出来前就让 AI 设了提醒（如「提醒我高数考试」），
+                // 服务器推送 exam_reminder 时再用同一课程名加提醒就会重复。
+                // 规则：若有同课程名的未完成提醒，则跳过服务器推送的版本，保留用户原始设置。
+                // 如需刷新时间（如考试日期变更），可考虑先删旧提醒再加新提醒。
+                bool hasExistingReminder = _reminder.HasPendingReminderContaining(courseName);
+                if (hasExistingReminder)
                 {
-                    DateTime remindAt = examTime.Date.AddDays(-i).AddHours(19); // 每晚 19:00 提醒复习
-                    if (remindAt <= DateTime.Now) continue; // 已过的时间不添加
-
-                    string dayTag = i == 1 ? "明天" : $"{i}天后";
-                    _reminder.AddReminder(
-                        $"📖 复习「{courseName}」（{dayTag}考试）",
-                        remindAt,
-                        source: "server",
-                        priority: "high"
-                    );
+                    Debug.Log($"[ServerPollService] 去重跳过: 已有包含「{courseName}」的待办提醒，不重复添加");
                 }
-
-                // 考试当天提前 2 小时提醒
-                DateTime examDayRemind = examTime.AddHours(-2);
-                if (examDayRemind > DateTime.Now)
+                else
                 {
-                    _reminder.AddReminder(
-                        $"📝 「{courseName}」考试倒计时 2 小时！",
-                        examDayRemind,
-                        source: "server",
-                        priority: "high"
-                    );
-                }
+                    // 添加多条复习提醒：examRemindDays 天前开始每天一条
+                    for (int i = examRemindDays; i > 0; i--)
+                    {
+                        DateTime remindAt = examTime.Date.AddDays(-i).AddHours(19); // 每晚 19:00 提醒复习
+                        if (remindAt <= DateTime.Now) continue; // 已过的时间不添加
 
-                Debug.Log($"[ServerPollService] 已添加复习提醒: {courseName} ({examTime:yyyy-MM-dd})");
+                        string dayTag = i == 1 ? "明天" : $"{i}天后";
+                        _reminder.AddReminder(
+                            $"📖 复习「{courseName}」（{dayTag}考试）",
+                            remindAt,
+                            source: "server",
+                            priority: "high"
+                        );
+                    }
+
+                    // 考试当天提前 2 小时提醒
+                    DateTime examDayRemind = examTime.AddHours(-2);
+                    if (examDayRemind > DateTime.Now)
+                    {
+                        _reminder.AddReminder(
+                            $"📝 「{courseName}」考试倒计时 2 小时！",
+                            examDayRemind,
+                            source: "server",
+                            priority: "high"
+                        );
+                    }
+
+                    Debug.Log($"[ServerPollService] 已添加复习提醒: {courseName} ({examTime:yyyy-MM-dd})");
+                }
             }
         }
     }

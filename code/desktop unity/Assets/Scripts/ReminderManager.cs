@@ -213,6 +213,41 @@ public class ReminderManager : MonoBehaviour
     /// <summary>获取未完成提醒数量</summary>
     public int PendingCount => _data.reminders.FindAll(r => !r.done).Count;
 
+    // ================================================================
+    //  去重
+    // ================================================================
+
+    /// <summary>
+    /// 检查是否有未完成提醒包含指定关键词（用于去重，避免服务器推送与用户手动设置重复）
+    /// </summary>
+    /// <param name="keyword">用于匹配的关键词，如课程名</param>
+    /// <returns>存在匹配的未完成提醒返回 true</returns>
+    public bool HasPendingReminderContaining(string keyword)
+    {
+        if (string.IsNullOrEmpty(keyword)) return false;
+        return _data.reminders.Exists(r =>
+            !r.done && r.text.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0);
+    }
+
+    /// <summary>
+    /// 删除所有包含指定关键词的未完成提醒（用于去重后替换）
+    /// </summary>
+    /// <param name="keyword">用于匹配的关键词</param>
+    /// <returns>实际删除的条数</returns>
+    public int DeletePendingRemindersContaining(string keyword)
+    {
+        if (string.IsNullOrEmpty(keyword)) return 0;
+        int count = _data.reminders.RemoveAll(r =>
+            !r.done && r.text.IndexOf(keyword, StringComparison.OrdinalIgnoreCase) >= 0);
+        if (count > 0)
+        {
+            Save();
+            NotifyDataChanged();
+            Debug.Log($"[ReminderManager] 去重清理: 关键词「{keyword}」删除了 {count} 条重复提醒");
+        }
+        return count;
+    }
+
     /// <summary>获取待办列表的格式化文本（供 AI 读取）</summary>
     public string GetPendingText()
     {

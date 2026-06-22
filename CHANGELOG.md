@@ -1,5 +1,16 @@
 # 改动日志
 
+## N17 (2026-06-22)
+
+### ✨ 新功能
+- **提醒去重机制** — `ReminderManager` 新增 `HasPendingReminderContaining()` 和 `DeletePendingRemindersContaining()` 方法，支持按关键词检查/删除重复待办
+- **服务器推送去重** — `HandleExamReminder` 添加考试复习提醒前，先用课程名检查 `ReminderManager` 是否已有同类待办，避免 AI 手动设置 + 服务器推送的重复
+
+### 🐛 修复
+- 考试提醒与用户手动设置（如「提醒我高数考试」）不再重复。保留用户先设的提醒，服务器推送的同类提醒自动跳过
+
+---
+
 ## N16 (2026-06-20)
 
 ### ✨ 新功能
