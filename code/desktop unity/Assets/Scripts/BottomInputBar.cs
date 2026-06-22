@@ -28,8 +28,11 @@ public class BottomInputBar : MonoBehaviour
     // ===== 样式 =====
     private GUIStyle _barBgStyle;
     private GUIStyle _inputStyle;
+    private GUIStyle _shadowStyle;
     private Texture2D _bgTex;
     private Texture2D _inputBgTex;
+    private Texture2D _shadowTex;
+    private Texture2D _whiteTex;     // 单色白图，配合 GUI.color 实现任意颜色线条
     private bool _stylesReady = false;
 
     // ===== 淡入动画 =====
@@ -41,10 +44,6 @@ public class BottomInputBar : MonoBehaviour
     // ===== 公共属性 =====
 
     public bool IsMouseOverBar { get; private set; } = false;
-
-    // 底部半透明遮罩 — 挡住拖动窗口钻入输入框与任务栏之间
-    private Texture2D _shadowTex;
-    private GUIStyle _shadowStyle;
 
     void Start()
     {
@@ -91,12 +90,25 @@ public class BottomInputBar : MonoBehaviour
         if (_stylesReady) return;
         _stylesReady = true;
 
-        // Windows 搜索风格 — 白色干净背景
-        _bgTex = MakeTex(1, 1, new Color(1f, 1f, 1f, 0.92f));                // 白底
-        _inputBgTex = MakeTex(1, 1, new Color(0.85f, 0.85f, 0.88f, 0.6f));  // 浅灰输入框底
+        // 共享白图 — 配合 GUI.color 实现任意颜色线条，避免每帧 new Texture2D
+        _whiteTex = new Texture2D(1, 1);
+        _whiteTex.SetPixel(0, 0, Color.white);
+        _whiteTex.Apply();
 
-        // 半透明遮罩 — 防止窗口钻入输入框与任务栏之间，又不会完全挡住普通窗口
-        _shadowTex = MakeTex(1, 1, new Color(0f, 0f, 0f, 0.15f));
+        // Windows 搜索风格 — 白色干净背景
+        _bgTex = new Texture2D(1, 1);
+        _bgTex.SetPixel(0, 0, new Color(1f, 1f, 1f, 0.92f));
+        _bgTex.Apply();
+
+        _inputBgTex = new Texture2D(1, 1);
+        _inputBgTex.SetPixel(0, 0, new Color(0.85f, 0.85f, 0.88f, 0.6f));
+        _inputBgTex.Apply();
+
+        // 半透明遮罩
+        _shadowTex = new Texture2D(1, 1);
+        _shadowTex.SetPixel(0, 0, new Color(0f, 0f, 0f, 0.15f));
+        _shadowTex.Apply();
+
         _shadowStyle = new GUIStyle { normal = { background = _shadowTex } };
 
         _barBgStyle = new GUIStyle
@@ -167,21 +179,22 @@ public class BottomInputBar : MonoBehaviour
         }
     }
 
-    /// <summary>画一条水平线</summary>
+    /// <summary>画一条水平线（使用缓存白图 + GUI.color，不每帧 new Texture）</summary>
     private void DrawLine(int x1, int y1, int x2, int y2, Color color)
     {
-        Texture2D tex = MakeTex(1, 1, color);
+        Color oldColor = GUI.color;
+        GUI.color = color;
         GUI.Box(new Rect(x1, y1, x2 - x1, 1), GUIContent.none,
-            new GUIStyle { normal = { background = tex } });
+            new GUIStyle { normal = { background = _whiteTex } });
+        GUI.color = oldColor;
     }
 
-    private Texture2D MakeTex(int w, int h, Color c)
+    void OnDestroy()
     {
-        var pix = new Color[w * h];
-        for (int i = 0; i < pix.Length; i++) pix[i] = c;
-        var tex = new Texture2D(w, h);
-        tex.SetPixels(pix);
-        tex.Apply();
-        return tex;
+        // 清理纹理，防止泄漏
+        if (_whiteTex != null) Destroy(_whiteTex);
+        if (_bgTex != null) Destroy(_bgTex);
+        if (_inputBgTex != null) Destroy(_inputBgTex);
+        if (_shadowTex != null) Destroy(_shadowTex);
     }
 }

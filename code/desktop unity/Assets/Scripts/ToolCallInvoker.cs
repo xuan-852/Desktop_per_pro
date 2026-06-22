@@ -285,7 +285,106 @@ public class ToolCallInvoker : MonoBehaviour
             return sb.ToString().Truncate(800);
         };
 
-        // ——— 17. 卜算记事：设置提醒 ———
+        // ——— 17. 搜天寻地：搜索文件 (优先用 Everything，毫秒级) ———
+        _executors["search_files"] = args =>
+        {
+            string query = JsonRead(args, "query");
+            string rootDir = JsonRead(args, "root");
+            if (string.IsNullOrEmpty(query)) return "❌ 未说要搜什么";
+
+            string esExe = FindEverythingCli();
+            bool useEverything = esExe != null;
+
+            try
+            {
+                var task = Task.Run(() =>
+                {
+                    var results = new List<string>();
+
+                    if (useEverything)
+                    {
+                        // ——— 用 Everything (es.exe) 搜索，毫秒级 ———
+                        try
+                        {
+                            string esArgs = $"-n 200 \"{query.Replace("\"", "\\\"")}\"";
+                            if (!string.IsNullOrEmpty(rootDir))
+                                esArgs = $"-n 200 -path \"{rootDir.Replace("\"", "\\\"")}\" \"{query.Replace("\"", "\\\"")}\"";
+
+                            var psi = new ProcessStartInfo(esExe, esArgs)
+                            {
+                                UseShellExecute = false,
+                                RedirectStandardOutput = true,
+                                RedirectStandardError = true,
+                                CreateNoWindow = true,
+                                StandardOutputEncoding = Encoding.UTF8,
+                                StandardErrorEncoding = Encoding.UTF8
+                            };
+                            var p = Process.Start(psi);
+                            if (p != null)
+                            {
+                                string output = p.StandardOutput.ReadToEnd();
+                                p.WaitForExit(3000);
+                                var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                                foreach (var line in lines)
+                                {
+                                    if (!string.IsNullOrWhiteSpace(line))
+                                        results.Add(line);
+                                }
+                            }
+                        }
+                        catch { useEverything = false; } // 失败了回退到递归
+                    }
+
+                    if (!useEverything)
+                    {
+                        // ——— 回退：递归搜索 ———
+                        try
+                        {
+                            if (string.IsNullOrEmpty(rootDir))
+                                rootDir = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+                            if (Directory.Exists(rootDir))
+                                SearchRecursive(rootDir, query, results, 200);
+                        }
+                        catch (Exception ex)
+                        {
+                            results.Add($"⚠️ 搜索中断：{ex.Message}");
+                        }
+                    }
+
+                    return results;
+                });
+
+                // 等最多 10 秒
+                if (task.Wait(TimeSpan.FromSeconds(10)))
+                {
+                    var list = task.Result;
+                    if (list.Count == 0)
+                    {
+                        string scope = useEverything
+                            ? (string.IsNullOrEmpty(rootDir) ? "本座的天眼所及之处" : $"「{rootDir}」")
+                            : (string.IsNullOrEmpty(rootDir) ? "桌面" : $"「{rootDir}」");
+                        return $"🔍 在{scope}中未找到与「{query}」匹配的文件";
+                    }
+                    string method = useEverything ? "⚡本座以 Everything 天眼通搜" : "🔍本座以递归之法搜";
+                    string scope2 = string.IsNullOrEmpty(rootDir) ? "全境" : $"「{rootDir}」";
+                    var sb = new StringBuilder();
+                    sb.AppendLine($"{method}{scope2}，得 {list.Count} 件与「{query}」相关之物：");
+                    foreach (var f in list)
+                        sb.AppendLine($"  📄 {f}");
+                    return sb.ToString().Truncate(2000);
+                }
+                else
+                {
+                    return $"⏱️ 搜索「{query}」耗时过长（>10s），请缩小搜索范围或指定更具体的目录";
+                }
+            }
+            catch (Exception e)
+            {
+                return $"❌ 搜索时出了岔子：{e.Message}";
+            }
+        };
+
+        // ——— 18. 卜算记事：设置提醒 ———
         _executors["set_reminder"] = args =>
         {
             string text = JsonRead(args, "text");
@@ -473,6 +572,29 @@ public class ToolCallInvoker : MonoBehaviour
             renderer.ActionController?.StopAllWithFade();
             return "✅ 已归元，恢复常态";
         };
+
+        // ——— 28. 观云望气：直接读取本地的天气数据（不开网页） ———
+        _executors["get_weather"] = args =>
+        {
+            var tc = FindObjectOfType<TimeWeatherController>();
+            if (tc == null) return "❌ 观星法阵未启";
+            if (!tc.weatherFetched) return "⏳ 尚未观测天象，再稍等片刻";
+
+            string wtName = tc.weather switch
+            {
+                TimeWeatherController.WeatherType.Clear    => "☀️ 晴",
+                TimeWeatherController.WeatherType.Cloudy   => "☁️ 多云",
+                TimeWeatherController.WeatherType.Overcast => "🌥 阴",
+                TimeWeatherController.WeatherType.Rain     => "🌧 雨",
+                TimeWeatherController.WeatherType.Drizzle  => "🌦 小雨",
+                TimeWeatherController.WeatherType.Thunder  => "⛈ 雷雨",
+                TimeWeatherController.WeatherType.Snow     => "❄️ 雪",
+                TimeWeatherController.WeatherType.Fog      => "🌫 雾",
+                _ => "未知"
+            };
+            string source = tc.weatherSource == TimeWeatherController.WeatherSource.QWeather ? "和风天机" : "wttr.in天眼";
+            return $"🌤️ 本座以{source}观天之象：\n• 天气：{wtName}\n• 气温：{tc.temperatureC:F0}°C";
+        };
     }
 
     // ================================================================
@@ -516,7 +638,7 @@ public class ToolCallInvoker : MonoBehaviour
     ""type"": ""function"",
     ""function"": {
       ""name"": ""search"",
-      ""description"": ""在 Bing 搜索引擎上查询信息并打开浏览器显示结果。用户说「帮我搜一下xxx」时调用。"",
+      ""description"": ""在 Bing 搜索引擎上查询信息并打开浏览器显示结果。用户说「帮我搜一下xxx」时调用。禁止用于查询天气（天气请用 get_weather）"",
       ""parameters"": {
         ""type"": ""object"",
         ""properties"": {
@@ -684,6 +806,21 @@ public class ToolCallInvoker : MonoBehaviour
   {
     ""type"": ""function"",
     ""function"": {
+      ""name"": ""search_files"",
+      ""description"": ""【搜索文件】按关键词搜索文件，若电脑有 Everything 则毫秒级搜索全盘，否则递归搜索指定目录。用户说「帮我找找xxx」「搜一下电脑里的xxx」「找文件」时调用。未指定 root 时默认搜索全盘（Everything模式）或桌面（递归回退模式）。最多返回200个结果。"",
+      ""parameters"": {
+        ""type"": ""object"",
+        ""properties"": {
+          ""query"": { ""type"": ""string"", ""description"": ""要搜索的文件名关键词（不区分大小写）"" },
+          ""root"": { ""type"": ""string"", ""description"": ""搜索根目录（有 Everything 时自动限定在此目录下搜索），为空则全盘搜索"" }
+        },
+        ""required"": [""query""]
+      }
+    }
+  },
+  {
+    ""type"": ""function"",
+    ""function"": {
       ""name"": ""set_reminder"",
       ""description"": ""设置一个定时提醒/便签。在本座的卜算记事簿中记下一件事，到时辰会提醒你。支持每日/工作日/每周重复。用户说「提醒我xxx」「记一下xxx」「设个闹钟」时调用。"",
       ""parameters"": {
@@ -702,7 +839,7 @@ public class ToolCallInvoker : MonoBehaviour
     ""type"": ""function"",
     ""function"": {
       ""name"": ""query_reminders"",
-      ""description"": ""查询所有待办提醒/便签。用户说「看看我的提醒」「有什么待办」「查便签」时调用。返回未完成提醒列表。"",
+      ""description"": ""查询所有待办提醒/便签。用户说「看看我的提醒」「有什么待办」「查便签」时调用，也可在用户提到出去玩/做安排等时主动调用来检查是否有冲突的待办事项。返回未完成提醒列表。"",
       ""parameters"": {
         ""type"": ""object"",
         ""properties"": {}
@@ -741,7 +878,7 @@ public class ToolCallInvoker : MonoBehaviour
     ""type"": ""function"",
     ""function"": {
       ""name"": ""query_exams"",
-      ""description"": ""查询教务系统中的考试安排。用户问「什么时候考试」「考试时间」「考试安排」时调用。返回每门考试的日期、时间、地点。"",
+      ""description"": ""查询教务系统中的考试安排。用户问「什么时候考试」「考试时间」「考试安排」时调用，也可在用户提到出去玩/约了人/做安排等时主动调用来检查是否和考试冲突。返回每门考试的日期、时间、地点。"",
       ""parameters"": {
         ""type"": ""object"",
         ""properties"": {}
@@ -816,6 +953,17 @@ public class ToolCallInvoker : MonoBehaviour
     ""function"": {
       ""name"": ""stop_action"",
       ""description"": ""停止当前正在播放的所有动作和表情，使桌面宠物恢复默认待机姿态。用户说「停下」「别动了」「恢复」时调用。"",
+      ""parameters"": {
+        ""type"": ""object"",
+        ""properties"": {}
+      }
+    }
+  },
+  {
+    ""type"": ""function"",
+    ""function"": {
+      ""name"": ""get_weather"",
+      ""description"": ""【天气专用】直接读取桌面本地已经获取到的天气数据（使用和风天气或 wttr.in），无需打开浏览器或搜索。用户问任何关于天气/温度/冷热的问题时，必须优先使用此术式，绝对不能用 search 去搜索天气。"",
       ""parameters"": {
         ""type"": ""object"",
         ""properties"": {}
@@ -1137,6 +1285,83 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($template)
             return string.IsNullOrEmpty(line) ? null : line;
         }
         catch { return null; }
+    }
+
+    /// <summary>寻找 Everything 命令行工具 es.exe</summary>
+    private static string FindEverythingCli()
+    {
+        string[] candidates =
+        {
+            @"C:\Program Files\Everything\es.exe",
+            @"C:\Program Files (x86)\Everything\es.exe",
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Everything\es.exe"),
+        };
+        foreach (var path in candidates)
+        {
+            if (File.Exists(path)) return path;
+        }
+        // 试 PATH
+        try
+        {
+            var psi = new ProcessStartInfo("where", "es.exe")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true
+            };
+            var p = Process.Start(psi);
+            string firstLine = p?.StandardOutput?.ReadLine();
+            p?.WaitForExit(500);
+            if (!string.IsNullOrEmpty(firstLine) && File.Exists(firstLine))
+                return firstLine;
+        }
+        catch { }
+        return null;
+    }
+
+    /// <summary>递归搜索文件（名称匹配，不限层级）</summary>
+    private static void SearchRecursive(string dir, string query, List<string> results, int maxResults)
+    {
+        if (results.Count >= maxResults) return;
+        try
+        {
+            // 搜索当前目录的文件名
+            foreach (var f in Directory.GetFiles(dir))
+            {
+                if (results.Count >= maxResults) return;
+                try
+                {
+                    string name = Path.GetFileName(f);
+                    if (name.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                        results.Add(f);
+                }
+                catch { }
+            }
+
+            // 递归子目录
+            foreach (var d in Directory.GetDirectories(dir))
+            {
+                if (results.Count >= maxResults) return;
+                // 跳过系统/隐藏目录和 junction 点
+                try
+                {
+                    var attr = File.GetAttributes(d);
+                    if ((attr & FileAttributes.ReparsePoint) != 0) continue; // 跳过符号链接/junction 防止死循环
+                    // 也把匹配的目录名加入结果
+                    string dirName = Path.GetFileName(d);
+                    if (dirName.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        results.Add(d + "\\");
+                        if (results.Count >= maxResults) return;
+                    }
+                    SearchRecursive(d, query, results, maxResults);
+                }
+                catch { }
+            }
+        }
+        catch (UnauthorizedAccessException) { }
+        catch (PathTooLongException) { }
+        catch { }
     }
 
     /// <summary>只在开始菜单 Programs 顶层找快捷方式（不递归）</summary>

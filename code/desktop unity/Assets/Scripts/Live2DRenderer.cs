@@ -2,6 +2,7 @@ using Live2D.Cubism.Core;
 using Live2D.Cubism.Framework;
 using Live2D.Cubism.Framework.Physics;
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
 
 // ===================================================================
@@ -239,6 +240,8 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     private GameObject _modelRoot;
     private CubismModel _cubismModel;
     private CubismPhysicsController _physicsController;
+    private CubismParameterStore _paramStore;
+    private CubismPhysicsSubRig _leftArmSubRig;
 
     // DesktopPet 引用
     private DesktopPet _pet;
@@ -328,6 +331,12 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     private float? _eyeTargetX = null;
     private float? _eyeTargetY = null;
 
+    // ===== 物理左臂(Param34/36/37)输出权重管理 =====
+    // 用于在空闲动作期间暂存"手臂L"子刚体权重，物理弹簧内部动量不停，
+    // 但输出权重归零后 Param34/36/37 不会收到物理驱动。
+    private float[] _savedLeftArmWeights;
+    private bool _leftArmPhysicsSaved = false;
+
     // 拖拽平滑转身
     private float _dragSmoothBodyY = 0f;
     // 拖拽速度追踪（帧间 petX 增量，平滑后驱动物理和输出）
@@ -403,6 +412,26 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
             _cubismModel = _modelRoot.GetComponentInChildren<CubismModel>();
             _physicsController = _modelRoot.GetComponentInChildren<CubismPhysicsController>();
+            _paramStore = _modelRoot.GetComponentInChildren<CubismParameterStore>();
+
+            // ★ 通过反射获取"手臂L"物理子刚体引用（Rig 是私有属性）
+            if (_physicsController != null)
+            {
+                var rigField = typeof(CubismPhysicsController).GetField("_rig",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (rigField != null)
+                {
+                    var rig = rigField.GetValue(_physicsController) as CubismPhysicsRig;
+                    if (rig != null)
+                    {
+                        _leftArmSubRig = rig.GetSubRig("手臂L");
+                        if (_leftArmSubRig != null)
+                            Debug.Log("[Live2DRenderer] ✓ 找到左臂物理子刚体 '手臂L'");
+                        else
+                            Debug.LogWarning("[Live2DRenderer] ⚠ 未找到 '手臂L' 物理子刚体");
+                    }
+                }
+            }
 
             // 列出所有子物体和组件
             Debug.Log($"[Live2DRenderer] 模型实例化后结构:");
@@ -550,6 +579,29 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             float eased = blendWeight * blendWeight;
             ApplyWalkBodyPose(eased);
         }
+        else
+        {
+            // ★ 空闲时：给物理系统中性体态 + 头角度信号，防止左臂物理残留偏量
+            //    Physics(800) 读取 ParamBodyAngleX/Y/Z（身体）、
+            //    ParamAngleX/Y/Z（头部）、ParamBreath（呼吸）来决定
+            //    衣服/头发/手臂(Param34/36/37)的物理摆动。
+            //    如果不设干净，物理读到走路残留值，左臂就歪到裙子背后。
+            //
+            // ★ 也设 Param34/36/37=0 打断 RestoreParameters 循环：
+            //    CubismParameterStore(order 150) 在 LateUpdate 阶段保存参数值。
+            //    如果不在这里设 0，order 150 会保存上一帧物理输出残留的非零值 →
+            //    ForceUpdateNow→RestoreParameters 恢复非零，导致弹簧动量永不归零。
+            SetParameter("ParamBodyAngleX", 0f);
+            SetParameter("ParamBodyAngleY", 0f);
+            SetParameter("ParamBodyAngleZ", 0f);
+            SetParameter("ParamAngleX", 0f);
+            SetParameter("ParamAngleY", 0f);
+            SetParameter("ParamAngleZ", 0f);
+            SetParameter("ParamBreath", 0f);
+            SetParameter("Param34", 0f);
+            SetParameter("Param36", 0f);
+            SetParameter("Param37", 0f);
+        }
     }
 
     private void LateUpdate()
@@ -677,7 +729,8 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         }
 
         // ★ 鼠标眼睛跟随覆盖：在所有动画参数之后、ForceUpdateNow 之前设置
-        bool eyeOverridden = (_eyeTargetX.HasValue || _eyeTargetY.HasValue);
+        //    但强制动作时禁用（如星辉/AI动作需控制眼珠方向）
+        bool eyeOverridden = (_eyeTargetX.HasValue || _eyeTargetY.HasValue) && !_actionLocked;
         if (eyeOverridden)
         {
             // 平滑追踪目标值（用 lerp 防止眼球突变）
@@ -691,7 +744,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             SetParameter("ParamEyeBallX", _eyeSmoothX);
             SetParameter("ParamEyeBallY", _eyeSmoothY);
         }
-        else if (_eyeSmoothActive)
+        else if (_eyeSmoothActive && !_actionLocked)
         {
             // 缓慢退回中心（让眼球自然回归，不跳）
             _eyeSmoothX = Mathf.Lerp(_eyeSmoothX, 0f, 0.04f);
@@ -708,10 +761,59 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         // ★ 优化：WallHit、走路、眼球追踪、调试偏移统一一次 ForceUpdateNow
         bool hasActiveAction = (_currentIdleAction > 0 && _idleActionTime > 0f);
         bool debugOffsetActive = (debugOffsetEnabled && !_actionLocked && !hasActiveAction && debugOffsets != null && debugOffsets.Count > 0);
-        bool needsForceUpdate = isWalking || _walkBlendRemaining > 0f || eyeOverridden || _wallHitTime > 0f || debugOffsetActive;
+        // ★ 重要：空闲动作（如星辉/伸懒腰）也要 ForceUpdate，否则物理系统覆盖了我们的值
+        bool needsForceUpdate = _actionLocked || isWalking || _walkBlendRemaining > 0f || hasActiveAction || eyeOverridden || _wallHitTime > 0f || debugOffsetActive;
         if (needsForceUpdate)
         {
             _cubismModel.ForceUpdateNow();
+        }
+
+        // ============================================================
+        // ★ 左臂(Param34/36/37) 物理拦截：双重 ForceUpdate + 权重归零
+        //
+        // 问题链：
+        //   1. CubismParameterStore(order 150) 保存当前参数值
+        //   2. Physics(order 800) 把 Param34/36/37 写为非零（弹簧动量）
+        //   3. 我们(order 801) 设回 0 并 ForceUpdateNow
+        //   4. ForceUpdateNow→Update()→RestoreParameters() 恢复 step 1 保存的非零值
+        //   5. 最终网格用的是 step 4 的非零值 → 左臂依然扭曲！
+        //
+        // 解决：
+        //   a) 二次 ForceUpdate：第一次后强设 0→SaveParameters→第二次 ForceUpdateNow，
+        //      第二次 RestoreParameters 恢复的是刚保存的 0。
+        //   b) 同时归零"手臂L"物理输出权重：让下一帧物理评估时左臂输出 = 0，
+        //      打断弹簧动量在帧间的传递。
+        // ============================================================
+        if (hasActiveAction || _actionLocked)
+        {
+            // === 0) 首次进入动作时保存左臂物理权重 ===
+            if (!_leftArmPhysicsSaved)
+            {
+                SaveLeftArmWeights();
+            }
+
+            // === 1) 归零"手臂L"输出权重（影响下一帧 physics evaluate） ===
+            ZeroLeftArmWeights();
+
+            // === 2) 第二次强设左臂 + 保存到参数存储 + 二次 ForceUpdate ===
+            SetParameter("Param34", 0f);
+            SetParameter("Param36", 0f);
+            SetParameter("Param37", 0f);
+
+            if (_paramStore != null)
+            {
+                _paramStore.SaveParameters();
+            }
+
+            _cubismModel.ForceUpdateNow();
+        }
+        else
+        {
+            // === 恢复左臂物理权重（动作结束后） ===
+            if (_leftArmPhysicsSaved)
+            {
+                RestoreLeftArmWeights();
+            }
         }
 
         // ★ 调试偏移通道：动画完成后，在动画值上叠加偏移量
@@ -822,7 +924,15 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             else if (_timeController.hour >= 5 && _timeController.hour < 8)
                 return MORNING_BUBBLES[Random.Range(0, MORNING_BUBBLES.Length)];
 
-            // 天气特化
+            // 天气特化 — 优先用 AI 生成的语录
+            if (_timeController.weatherFetched && _timeController.aiWeatherReady)
+            {
+                string aiMsg = _timeController.PickAiWeatherLine();
+                if (aiMsg != null) return aiMsg;
+                // 回退：AI 还没准备好则走硬编码
+            }
+
+            // 天气特化（硬编码回退）
             if (_timeController.weatherFetched)
             {
                 var wt = _timeController.weather;
@@ -987,7 +1097,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             Debug.Log($"[Live2DRenderer] ▶ 动作 #{_currentIdleAction}");
         }
 
-        if (_currentIdleAction > 0 && !_actionLocked)
+        if (_currentIdleAction > 0 && (!_actionLocked || _actionLocked))
         {
             _idleActionTime += Time.deltaTime;
             _complexActionPhase += Time.deltaTime;
@@ -1042,14 +1152,254 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     }
 
     /// <summary>
-    /// 动作4: 星辉环绕 ✨（已移除视觉特效，仅保留动作时长）
+    /// 动作4: 星辉环绕 ✨
+    /// 五阶段硬编码：星现→伸手→触摸→满盈→归位
+    /// 与 ActionPresetPlayer 无关，纯 idle switch 驱动
     /// </summary>
     private void UpdateStarSpin()
     {
-        float duration = SPIN_DURATION;
-        float t = Mathf.Clamp01(_complexActionPhase / duration);
+        float p = _complexActionPhase; // 秒
+        float duration = SPIN_DURATION; // 6f
+        float t = Mathf.Clamp01(p / duration);
 
-        if (t >= 1f) ResetIdleAction();
+        if (t >= 1f) { ResetIdleAction(); return; }
+
+        // === 阶段边界（秒） ===
+        const float P1 = 0.8f;   // Phase1: 星现·抬头
+        const float P2 = 2.5f;   // Phase2: 凝视·伸手
+        const float P3 = 3.5f;   // Phase3: 触摸星辰
+        const float P4 = 4.5f;   // Phase4: 星辉满盈
+        // Phase5: 4.5→5.5s 星隐·归位
+
+        // 阶段内归一化进度 0→1
+        float p1 = Mathf.Clamp01(p / P1);
+        float p2 = Mathf.Clamp01((p - P1) / (P2 - P1));
+        float p3 = Mathf.Clamp01((p - P2) / (P3 - P2));
+        float p4 = Mathf.Clamp01((p - P3) / (P4 - P3));
+        float p5 = Mathf.Clamp01((p - P4) / (duration - P4));
+
+        float easeP1 = EaseOutQuad(p1);
+        float easeP2 = EaseOutQuad(p2);
+        float easeP3 = EaseOutQuad(p3);
+        float easeP4 = EaseOutQuad(p4);
+        float easeP5 = EaseOutQuad(p5);
+
+        // ★ 腰不动 — 全程固定
+        SetParameter("ParamBodyAngleZ", 2f);
+
+        // ===== 星星参数 =====
+        float starVis, starSize, outerScale, outerAppear, plate;
+
+        if (p < P1)
+        {
+            starVis = easeP1;           // 0→1
+            starSize = easeP1 * 0.5f;   // 0→0.5
+            outerScale = 0f;
+            outerAppear = 0f;
+            plate = 0f;
+        }
+        else if (p < P2)
+        {
+            starVis = 1f;
+            starSize = 0.5f + easeP2 * 0.7f;  // 0.5→1.2
+            outerScale = easeP2 * 0.8f;        // 0→0.8
+            outerAppear = 0f;
+            plate = 0f;
+        }
+        else if (p < P3)
+        {
+            starVis = 1f;
+            starSize = 1.2f;
+            outerScale = 0.8f + easeP3 * 0.7f; // 0.8→1.5
+            outerAppear = easeP3;               // 0→1
+            plate = 0f;
+        }
+        else if (p < P4)
+        {
+            starVis = 1f;
+            starSize = 1.2f;
+            outerScale = 1.5f * (1f - easeP4); // 1.5→0
+            outerAppear = 1f - easeP4;          // 1→0
+            plate = easeP4 * 0.7f;              // 0→0.7
+        }
+        else
+        {
+            // Phase5: 所有星星归零
+            float f = 1f - easeP5; // 1→0
+            starVis = f;
+            starSize = f * 1.2f;
+            outerScale = 0f;
+            outerAppear = 0f;
+            plate = f * 0.7f;
+        }
+
+        _mapper.Set("star_visibility",         starVis);
+        _mapper.Set("star_size",               starSize);
+        _mapper.Set("star_outer_scale",        outerScale);
+        _mapper.Set("star_outer_appear",       outerAppear);
+        _mapper.Set("star_plate_transparency", plate);
+
+        // ===== 表情 =====
+        float eyeSmile, mouthForm, browUp, eyeLOpen, eyeROpen;
+        float eyeBX, eyeBY;
+
+        if (p < P1)
+        {
+            // 惊喜：睁大眼，眼珠向上，眉上扬，嘴微张
+            eyeLOpen = 1f;
+            eyeROpen = 1f;
+            eyeBX = 0f;
+            eyeBY = -easeP1 * 0.5f;
+            eyeSmile = 0f;
+            mouthForm = easeP1 * 0.2f;
+            browUp = easeP1;
+        }
+        else if (p < P2)
+        {
+            // 笑纹渐现，眼珠看右上
+            eyeLOpen = 1f;
+            eyeROpen = 1f;
+            eyeBX = easeP2 * 0.3f;
+            eyeBY = -0.5f + easeP2 * 0.1f;  // -0.5→-0.4
+            eyeSmile = easeP2 * 0.3f;
+            mouthForm = 0.2f + easeP2 * 0.1f; // 0.2→0.3
+            browUp = 1f;
+        }
+        else if (p < P3)
+        {
+            // 笑意加深，眼珠随星星摆动（sin）
+            float sway = Mathf.Sin(p * 3f) * 0.15f;
+            eyeLOpen = 1f;
+            eyeROpen = 1f;
+            eyeBX = 0.3f + sway;              // 0.3±0.15
+            eyeBY = -0.4f;
+            eyeSmile = 0.3f + easeP3 * 0.3f;  // 0.3→0.6
+            mouthForm = 0.3f + easeP3 * 0.2f; // 0.3→0.5
+            browUp = 1f - easeP3 * 0.3f;      // 1→0.7
+        }
+        else if (p < P4)
+        {
+            // 微笑最甜，眼睛回中
+            eyeLOpen = 1f;
+            eyeROpen = 1f;
+            eyeBX = 0.3f * (1f - easeP4);
+            eyeBY = -0.4f + easeP4 * 0.2f;    // -0.4→-0.2
+            eyeSmile = 0.6f + easeP4 * 0.2f;  // 0.6→0.8
+            mouthForm = 0.5f + easeP4 * 0.1f; // 0.5→0.6
+            browUp = 0.7f * (1f - easeP4);    // 0.7→0
+        }
+        else
+        {
+            // 归零
+            eyeLOpen = 1f;
+            eyeROpen = 1f;
+            eyeBX = 0f;
+            eyeBY = 0f;
+            eyeSmile = 0.8f * (1f - easeP5);
+            mouthForm = 0.6f * (1f - easeP5);
+            browUp = 0f;
+        }
+
+        SetParameter("ParamEyeLOpen", eyeLOpen);
+        SetParameter("ParamEyeROpen", eyeROpen);
+        SetParameter("ParamEyeBallX", eyeBX);
+        SetParameter("ParamEyeBallY", eyeBY);
+        SetParameter("ParamEyeLSmile", eyeSmile);
+        SetParameter("ParamEyeRSmile", eyeSmile);
+        SetParameter("ParamMouthForm", mouthForm);
+        SetParameter("ParamBrowRY", browUp * 3f);
+        SetParameter("ParamBrowLY", browUp * 3f);
+
+        // ===== 头部 =====
+        float headX, headY, headZ;
+
+        if (p < P1)
+        {
+            headX = -easeP1 * 8f;     // 抬头
+            headY = -easeP1 * 3f;     // 微左偏
+            headZ = 0f;
+        }
+        else if (p < P2)
+        {
+            headX = -8f;
+            headY = -(3f - easeP2 * 2f); // -3→-1（头转向右）
+            headZ = easeP2 * 3f;         // 歪头欣赏
+        }
+        else if (p < P3)
+        {
+            // 微微摆动
+            float sway = Mathf.Sin(p * 2.5f) * 1.5f;
+            headX = -8f;
+            headY = -1f + sway;
+            headZ = 3f;
+        }
+        else if (p < P4)
+        {
+            headX = -8f;
+            headY = -1f * (1f - easeP4);
+            headZ = 3f * (1f - easeP4);
+        }
+        else
+        {
+            headX = -8f * (1f - easeP5);
+            headY = 0f;
+            headZ = 0f;
+        }
+
+        SetParameter("ParamAngleX", headX);
+        SetParameter("ParamAngleY", headY);
+        SetParameter("ParamAngleZ", headZ);
+
+        // ===== 身体 =====
+        float bodyX;
+
+        if (p < P1)
+            bodyX = -easeP1 * 3f;
+        else if (p < P4)
+            bodyX = -6f;              // 后仰加深
+        else
+            bodyX = -6f * (1f - easeP5);
+
+        SetParameter("ParamBodyAngleX", bodyX);
+
+        // ===== 双手手臂 =====
+        float armRaise;
+
+        if (p < P1)
+        {
+            armRaise = easeP1;           // Phase 1: 0→1 手臂抬起
+        }
+        else if (p < P3)
+        {
+            armRaise = 1f;               // Phase 2-3: 保持抬起
+        }
+        else if (p < P4)
+        {
+            armRaise = 1f - easeP4;      // Phase 4: 1→0 慢慢放下
+        }
+        else
+        {
+            armRaise = 0f;               // Phase 5: 保持放下（防弹回）
+        }
+
+        // 右手臂（用 _mapper.Set 映射表支持换模型）
+        _mapper.Set("arm_right_upper",         armRaise * 8f);
+        _mapper.Set("arm_right_mid",           armRaise * 4f);
+        _mapper.Set("arm_right_lower",         armRaise * 6f);
+        _mapper.Set("arm_right_rotation",      armRaise * 10f);
+        _mapper.Set("arm_right_base_rotation", armRaise * 4f);
+        _mapper.Set("arm_right_reach",        -armRaise * 0.2f);
+        _mapper.Set("arm_right_wrist_z",      -armRaise * 8f);
+
+        // ★ 左臂无独立的旋转/位置参数，但物理系统会驱动 Param34/36/37，
+        //    必须显式钳回默认值（0），否则物理残留导致手臂向右裙子背后扭曲
+        SetParameter("Param34", 0f);
+        SetParameter("Param36", 0f);
+        SetParameter("Param37", 0f);
+
+        // 手部图层（随 armRaise 平滑消退，不会弹起）
+        float handLayer = Mathf.Min(1f, armRaise * 1.2f);
+        SetHandLayer(handLayer);
     }
 
     /// <summary>
@@ -1084,10 +1434,10 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("Param119", phase * 0.8f);// 伸手 图层调整
         SetParameter("Param93", phase);         // 右手 基础 切换
         SetParameter("Param118", phase * 0.6f); // 右手伸出参数
-        // 左臂配合
-        SetParameter("Param34", -phase * 3f);   // 左臂L1
-        SetParameter("Param36", -phase * 2f);   // 左臂L2
-        SetParameter("Param37", -phase * 1.5f); // 左臂L3
+        // 左臂配合（自然放下）
+        SetParameter("Param34", phase * 0f);   // 左臂L1
+        SetParameter("Param36", phase * 0f);   // 左臂L2
+        SetParameter("Param37", phase * 0f);   // 左臂L3
 
         // 身体后仰
         SetParameter("ParamBodyAngleX", phase * STRETCH_BODY_BACK);
@@ -1403,6 +1753,54 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("Param119", layer * 1f);
     }
 
+    // ================================================================
+    // ★ 左臂(Param34/36/37) 物理权重管理
+    //    "手臂L"子刚体内部有弹簧动量（Particles[].Velocity 等），
+    //    即使我们在 C# 设 Param34=0，物理下一帧评估时仍会产出非零输出。
+    //    通过暂存并归零输出权重，让物理输出乘以 0 后不写入参数值。
+    // ================================================================
+
+    /// <summary>保存"手臂L"当前输出权重到备份数组，然后设所有权重=0</summary>
+    private void SaveLeftArmWeights()
+    {
+        if (_leftArmSubRig == null || _leftArmSubRig.Output == null) return;
+
+        int n = _leftArmSubRig.Output.Length;
+        _savedLeftArmWeights = new float[n];
+        for (int i = 0; i < n; i++)
+        {
+            _savedLeftArmWeights[i] = _leftArmSubRig.Output[i].Weight;
+            _leftArmSubRig.Output[i].Weight = 0f;
+        }
+        _leftArmPhysicsSaved = true;
+    }
+
+    /// <summary>恢复"手臂L"输出权重为备份值</summary>
+    private void RestoreLeftArmWeights()
+    {
+        if (_leftArmSubRig == null || _leftArmSubRig.Output == null) return;
+        if (_savedLeftArmWeights == null) { _leftArmPhysicsSaved = false; return; }
+
+        int n = Mathf.Min(_savedLeftArmWeights.Length, _leftArmSubRig.Output.Length);
+        for (int i = 0; i < n; i++)
+        {
+            _leftArmSubRig.Output[i].Weight = _savedLeftArmWeights[i];
+        }
+        _savedLeftArmWeights = null;
+        _leftArmPhysicsSaved = false;
+    }
+
+    /// <summary>归零"手臂L"输出权重（每帧在动作持续期间执行）</summary>
+    private void ZeroLeftArmWeights()
+    {
+        if (_leftArmSubRig == null || _leftArmSubRig.Output == null) return;
+
+        for (int i = 0; i < _leftArmSubRig.Output.Length; i++)
+        {
+            _leftArmSubRig.Output[i].Weight = 0f;
+        }
+    }
+
     /// <summary>重置空闲动作，清理参数</summary>
     private void ResetIdleAction()
     {
@@ -1468,6 +1866,12 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("Param155", 0f); // 镜头X
         SetParameter("Param156", 0f); // 镜头Y
         SetParameter("Param157", 0f); // 人物缩小放大
+        // 星星特效参数
+        SetParameter("Param451", 0f); // star_visibility
+        SetParameter("Param541", 0f); // star_size
+        SetParameter("Param1071", 0f); // star_outer_scale
+        SetParameter("Param1081", 0f); // star_outer_appear
+        SetParameter("Param154", 0f); // star_plate_transparency
 
         if (wasLocked)
         {
@@ -1927,14 +2331,55 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             _pet.Pause(0f);
 
         _actionLocked = true; // 锁定不被走路覆盖
+
+        // ★ 安全超时：万一协程挂了/被 StopCoroutine 杀掉了导致 onComplete 永远不触发，
+        //   这个 Invoke 会在最大动作时长后强行释放锁，防止宠物永久卡死。
+        //   协程正常完成时会 CancelInvoke 取消这个超时。
+        float maxDuration = GetMaxActionDuration(name);
+        CancelInvoke(nameof(ReleaseActionLock));
+        Invoke(nameof(ReleaseActionLock), maxDuration);
+
         ActionController.PlayAction(name, () =>
         {
+            // 安全超时已触发则不再重复释放
+            if (!_actionLocked) return;
+            CancelInvoke(nameof(ReleaseActionLock));
             _actionLocked = false;
             // ★ 动作完毕恢复宠物物理
             if (_pet != null) _pet.Resume();
             OnForcedActionFinished?.Invoke();
             onComplete?.Invoke();
         });
+    }
+
+    /// <summary>根据动作名估算最大时长（秒），超时后强行释放锁</summary>
+    private float GetMaxActionDuration(string name)
+    {
+        // 已知动作的合理最大时长（含 globalFadeIn + 所有 phase + globalFadeOut + 余量）
+        return name switch
+        {
+            "star_spin" => 8f,    // 5.5s + 余量
+            "stretch"   => 6f,    // 4.5s + 余量
+            "heart_eyes" => 5f,
+            "money"     => 5f,
+            "cry"       => 5f,
+            "blush"     => 5f,
+            "confuse"   => 5f,
+            "magic_circle" => 10f,
+            _ => 6f // 默认 6 秒
+        };
+    }
+
+    /// <summary>强制释放动作锁（Invoke 回调），恢复宠物运动</summary>
+    private void ReleaseActionLock()
+    {
+        if (!_actionLocked) return;
+        Debug.LogWarning($"[Live2DRenderer] ⏰ 动作超时强制释放锁 (ActionLocked={_actionLocked})");
+        _actionLocked = false;
+        if (_pet != null && _pet.isPaused)
+            _pet.Resume();
+        // 通知调用方（ContextMenu 恢复宠物状态）
+        OnForcedActionFinished?.Invoke();
     }
 
     /// <summary>获取可用的表情列表（逗号分隔字符串）</summary>

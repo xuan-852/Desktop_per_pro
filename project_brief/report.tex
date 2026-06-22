@@ -800,23 +800,48 @@ public interface IPetRenderer
 
 \subsection{与 AI 集成}
 
-AI 模块通过 \texttt{ToolCallInvoker} 注册了 4 个数据查询术式：
+AI 模块通过 \texttt{ToolCallInvoker} 注册了 28+ 个工具术式，涵盖系统操作、文件搜索、学业数据查询和角色控制：
 
 \begin{table}[H]
 \centering
-\caption{AI 数据查询工具}
+\caption{AI 工具术式一览（部分）}
 \label{tab:ai-data-tools}
 \begin{tabular}{lll}
 \toprule
-\textbf{术式名称} & \textbf{API 端点} & \textbf{用途} \\
+\textbf{术式名称} & \textbf{分类} & \textbf{用途} \\
 \midrule
-\texttt{query\_scores} & \texttt{/api/pet/scores} & 成绩查询 \\
-\texttt{query\_schedule} & \texttt{/api/pet/schedule} & 课表查询 \\
-\texttt{query\_exams} & \texttt{/api/pet/exams} & 考试查询 \\
-\texttt{query\_user\_status} & \texttt{/api/pet/user/status} & 学业概览 \\
+\texttt{open\_url} & 系统 & 在浏览器中打开网址 \\
+\texttt{open\_app} & 系统 & 启动应用/打开文件 \\
+\texttt{search} & 系统 & Bing 搜索引擎查询 \\
+\texttt{take\_screenshot} & 系统 & 截取当前屏幕 \\
+\texttt{set\_volume} & 系统 & 调节系统音量 \\
+\texttt{search\_files} & 文件 & \textbf{Everything 毫秒级文件搜索（回退递归）} \\
+\texttt{list\_files} & 文件 & 列出目录内容 \\
+\texttt{open\_folder} & 文件 & 在资源管理器中打开文件夹 \\
+\texttt{set\_reminder} & 便签 & 设置定时提醒（支持重复） \\
+\texttt{query\_reminders} & 便签 & 查询待办提醒 \\
+\texttt{query\_scores} & 学业 & 成绩查询 \\
+\texttt{query\_schedule} & 学业 & 课表查询 \\
+\texttt{query\_exams} & 学业 & 考试查询 \\
+\texttt{query\_user\_status} & 学业 & 学业概览 \\
+\texttt{set\_expression} & 角色 & 切换面部表情 \\
+\texttt{play\_action} & 角色 & 播放复合动作动画 \\
+\texttt{get\_weather} & 环境 & 读取本地天气数据 \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+\subsubsection{Everything 文件搜索集成}
+
+\texttt{search\_files} 术式在 Windows 文件搜索方面实现了重大优化：
+
+\begin{itemize}
+    \item \textbf{优先 Everything}：自动检测并调用 Everything CLI（es.exe），利用其 USN Journal 索引实现全盘毫秒级搜索
+    \item \textbf{自动检测}：启动时在 Program Files、LocalAppData 及 PATH 中搜索 es.exe
+    \item \textbf{路径限定}：支持 \texttt{root} 参数限定搜索范围为特定目录
+    \item \textbf{智能回退}：若未安装 Everything，自动切换到递归目录搜索（10 秒超时）
+    \item \textbf{最多 200 结果}：防止返回过多结果导致消息过长
+\end{itemize}
 
 聊天时 AI 自动判断需要调用的术式，从服务端获取真实数据后以白话回复用户。
 
@@ -1127,353 +1152,16 @@ Desktop_per_pro/
            &       & 新增 query\_scores / query\_schedule / query\_user\_status 术式\\
            &       & ChatManager 提示词新增「卜算传讯」章节\\
            &       & 修复逐句显示完后弹出全文的 bug\\
+2026-06-20 & N16  & \textbf{Everything 毫秒级文件搜索集成}\\
+           &       & 修复文件搜索 3s 超时：创建专用 search\_files 工具（10s 超时）\\
+           &       & ToolCallInvoker 工具扩展至 28+ 个\\
+           &       & 新增 FindEverythingCli() 自动检测 es.exe\\
+           &       & 新增 SearchRecursive() 递归回退搜索
 \bottomrule
 \end{tabular}
 \end{table}
 
 \end{document}
-
-检测鼠标点击模型时的反馈逻辑。
-
-\begin{lstlisting}[style=csharp,caption={TouchController.cs 骨架},label={lst:touch}]
-using UnityEngine;
-
-public class TouchController : MonoBehaviour
-{
-    [Header("点击反馈")]
-    public float reactionDuration = 1.0f; // 反应持续时间
-
-    private DesktopPet pet;
-    private float reactionTimer = 0f;
-    private bool isReacting = false;
-
-    void Start()
-    {
-        pet = GetComponent<DesktopPet>();
-    }
-
-    void OnMouseDown()
-    {
-        if (!isReacting)
-        {
-            // 触发点击反应
-            isReacting = true;
-            reactionTimer = reactionDuration;
-            pet.SwitchState(DesktopPet.PetState.Idle);
-
-            // 随机播放一个反应动画
-            Animator anim = GetComponent<Animator>();
-            if (anim != null)
-                anim.SetTrigger("Touch");
-
-            // 可选：播放音效
-        }
-    }
-
-    void Update()
-    {
-        if (isReacting)
-        {
-            reactionTimer -= Time.deltaTime;
-            if (reactionTimer <= 0f)
-            {
-                isReacting = false;
-                // 恢复正常状态
-            }
-        }
-    }
-}
-\end{lstlisting}
-
-% ═══════════════════════════════════════════
-\section{行走动画设计原理}
-% ═══════════════════════════════════════════
-
-\noindent
-\textbf{版本}：1.1 \\
-\textbf{更新内容}：补充 2D 侧面行走循环（Walk Cycle）动画理论，指导 Live2D 参数化走路动画的实现。
-
-\subsection{核心哲学}
-
-行走的本质是\textbf{「摔倒—接住自己」}的循环：
-重力不断将身体拉向地面，而双腿交替前伸，在身体即将倾倒的瞬间接住它。
-这一个循环中提炼出 4 个关键姿势（Key Poses），它们定义了行走的节奏和力学感。
-
-\subsection{四大关键姿势}
-
-\begin{table}[H]
-\centering
-\caption{行走循环四大关键姿势}
-\label{tab:walkcycle}
-\begin{tabular}{lp{3.5cm}p{6cm}c}
-\toprule
-\textbf{姿势} & \textbf{别名} & \textbf{描述} & \textbf{身体高度} \\
-\midrule
-Contact & 跨步位、Heel \& Toe & 一脚跟触地、一脚尖离地，\newline 身体处于「失重」瞬间 & 低 \\
-Down / Recoil & 下落位、重量转移 & 重心完全压在前脚，\newline 膝盖弯曲吸收冲击 & \textbf{最低} \\
-Passing & 过地位 & 承重腿在身体正下方，\newline 另一条腿经过其旁 & \textbf{最高} \\
-Up / High & 抬高位、升空位 & 后腿推离地面，\newline 前腿伸展准备落地 & 高 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{垂直弹跳相位}
-
-垂直弹跳是行走动画中\textbf{最重要}的视觉信号——没有它，行走就会变成「地面滑行」。
-
-\begin{itemize}
-    \item \textbf{最高点}：Passing（过地位）——小腿肌肉将身体推起
-    \item \textbf{最低点}：Down（下落位）——膝盖弯曲吸收冲击
-    \item \textbf{相位序列}：Contact(低)→Down(\textbf{最低})→Passing(\textbf{最高})→Up(高)→Contact(对侧)
-    \item \textbf{弹跳幅度}：自然行走约身高的 2--4\%，卡通可放大到 10--20 cm
-\end{itemize}
-
-数学表达：设步态相位 $\phi \in [0, 2\pi)$，则
-
-\begin{equation}
-    \text{BodyHeight}(\phi) = A \cdot \cos(\phi) + \text{BaseHeight}
-\end{equation}
-
-其中 $A$ 为弹跳幅度，$\phi=0$ 时（Passing 位）身体最高，$\phi=\pi$ 时（Down 位）身体最低。
-
-\subsection{手臂与腿的交叉对位}
-
-\textbf{核心法则}：一条腿向前时，\textbf{对侧}手臂向前（同侧手臂向后）。
-
-\begin{equation}
-    \text{Arm}_{\text{left}} = -\text{Leg}_{\text{right}} = +\text{Leg}_{\text{left}}
-\end{equation}
-
-\begin{table}[H]
-\centering
-\caption{手臂-腿交替关系}
-\label{tab:armleg}
-\begin{tabular}{cccc}
-\toprule
-\textbf{阶段} & \textbf{左腿} & \textbf{左臂} & \textbf{右臂} \\
-\midrule
-左腿在前 (Contact) & 前 & 后 & 前 \\
-左腿过地 (Passing) & 中 & 中 & 中 \\
-右腿在前 (Contact) & 后 & 前 & 后 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-这一模式来自骨盆与肩膀的\textbf{对向旋转}，是人体自然步态的生物学基础。
-
-\subsection{身体前倾与速度}
-
-\begin{table}[H]
-\centering
-\caption{行走类型与前倾角度}
-\label{tab:lean}
-\begin{tabular}{lc}
-\toprule
-\textbf{行走类型} & \textbf{前倾角度} \\
-\midrule
-休闲散步 & 3--7° \\
-正常步行 & 5--10° \\
-快走 & 10--20° \\
-奔跑 & 20--30°+ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-前倾角度与速度呈正比：速度越快，需要更大的前倾来产生水平方向的动量。
-
-\subsection{头部运动}
-
-\begin{itemize}
-    \item \textbf{随身体弹跳}：头上下的幅度约为身体弹跳的 50--70\%
-    \item \textbf{平滑补偿}：大脑为保持视野水平，会使头部轨迹比骨盆更平滑
-    \item \textbf{二次运动}：头部可做微小延迟跟随（跟随主运动后到达），增加生动感
-    \item \textbf{行进方向}：朝行走方向微倾，自然行走时约低头 3--5°
-\end{itemize}
-
-\subsection{Live2D 参数映射}
-
-结合符玄 Live2D 模型的实际可用参数，将行走循环映射如下：
-
-\begin{table}[H]
-\centering
-\caption{行走动画 $\to$ Live2D 参数映射}
-\label{tab:mapping}
-\begin{tabular}{llc}
-\toprule
-\textbf{动画要素} & \textbf{Live2D 参数} & \textbf{典型值} \\
-\midrule
-身体转体（侧面视角） & ParamBodyAngleY & 18°（恒定） \\
-身体前倾 & ParamBodyAngleX & 5°（恒定） \\
-脸转向侧面 & ParamAngleY & 18°（恒定） \\
-低头看路 & ParamAngleX & 8°（恒定） \\
-垂直颠簸 & 模型 Y 轴（像素偏移） & 4 px \\
-呼吸加深 & ParamBreath & 3.0（恒定偏大） \\
-\addlinespace
-\textbf{左腿参数} & & \\
-\quad 抬腿 & Param165 (抬腿) & $\pm$4° \\
-\quad 前后摆动 & Param126 (body X 腿 动画 位移) & $\pm$6° \\
-\quad 弯曲透视 & Param127 (body X 腿 动画 透视) & 0--6° \\
-\addlinespace
-\textbf{右腿参数} & & \\
-\quad 抬腿 & Param164 (腿) & $\pm$4°（反向） \\
-\quad 前后摆动 & Param129 (body X 腿 动画 R 位移) & $\pm$6°（反向） \\
-\quad 弯曲透视 & Param131 (body X 腿 动画R 透视) & 0--6°（反向） \\
-\addlinespace
-\textbf{右臂（大范围）} & Param94 (右手上臂旋转) & $\pm$2（范围[-30,60]） \\
-\textbf{右臂R1（前臂）} & Param31 (右手臂R1) & $\pm$0.28（范围[-1,1]） \\
-\textbf{右臂R2} & Param32 (右手臂R2) & $\pm$0.16（范围[-1,1]） \\
-\textbf{右臂上臂} & Param33 (右手臂R1) & $\pm$0.16（范围[-1,1]） \\
-\textbf{左臂L1} & Param34 (手臂L1) & $\pm$0.28（范围[-1,1]，反向） \\
-\textbf{左臂L2} & Param36 (手臂L2) & $\pm$0.16（范围[-1,1]，反向） \\
-\textbf{左臂L3} & Param37 (手臂L3) & $\pm$0.16（范围[-1,1]，反向） \\
-耸肩 & Param153 & 0--1.5° \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{常见错误}
-
-\begin{enumerate}
-    \item \textbf{身体高度无变化}（滑动步态 / Sliding）—— 最常见的错误，行走看起来像在地面滑行
-    \item \textbf{无重量转移} —— 重心始终在中间，缺乏脚踏实地感
-    \item \textbf{同手同脚} —— 混淆了交叉对位法则
-    \item \textbf{弹跳相位错误} —— 最高点和最低点位置搞反，导致颠簸节奏违和
-    \item \textbf{头部刚性跟随} —— 头应该比身体有轻微的延迟和独立运动
-    \item \textbf{速度与参数不协调} —— 步频、步幅、前倾角度之间应保持一致性
-\end{enumerate}
-
-% ═══════════════════════════════════════════
-\section{实施路线}
-% ═══════════════════════════════════════════
-
-项目实施分为四个阶段，每阶段有明确的里程碑：
-
-\subsection{第一阶段：环境搭建（第 1 天）}
-
-\begin{itemize}
-    \item 在 Unity Hub 中创建新项目 \texttt{DesktopPerPro}
-    \item 导入 \texttt{TransparentWindowManager.unitypackage}
-    \item 配置 Camera 为透明背景
-    \item 验证：运行后 Unity 窗口透明叠加在桌面上
-    \item 初始化 Git 仓库，创建 \texttt{.gitignore}（Unity 模板）
-\end{itemize}
-
-\subsection{第二阶段：模型导入（第 2--3 天）}
-
-\begin{itemize}
-    \item 获取符玄 3D 模型（FBX/Unity AssetBundle）
-    \item 导入 Unity，配置贴图和材质
-    \item 建立 Animator Controller，设置基本动画状态
-    \item 搭建简单场景：将模型放置在透明背景中
-\end{itemize}
-
-\subsection{第三阶段：交互实现（第 4--6 天）}
-
-\begin{itemize}
-    \item 实现 \texttt{DesktopPet.cs}：状态机 + 物理
-    \item 实现 \texttt{DragHandler.cs}：拖拽 + 抛掷
-    \item 实现 \texttt{WindowOverlay.cs}：透明 + 置顶
-    \item 实现 \texttt{TouchController.cs}：点击反馈
-    \item 测试：宠物可在桌面自由拖拽、下落、行走
-\end{itemize}
-
-\subsection{第四阶段：集成与优化（第 7--10 天）}
-
-\begin{itemize}
-    \item 集成进程间通信（与旧 \texttt{text1.exe} 对话）
-    \item 添加窗口置顶轮询（防止被遮挡）
-    \item 性能优化（降低无关渲染开销）
-    \item 打包为独立 Windows 可执行文件
-\end{itemize}
-
-% ═══════════════════════════════════════════
-\section{模型获取方案}
-% ═══════════════════════════════════════════
-
-由于米哈游官方未直接公开角色模型文件，获取符玄 3D 模型有以下途径：
-
-\begin{enumerate}
-    \item \textbf{SR-Model-Importer}：社区开发的 Unity 工具，可从游戏资源包中提取角色模型
-    \item \textbf{hoyo-models 社区}：部分站点提供已导出的 FBX 格式
-    \item \textbf{VRM 社区模型}：有爱好者制作的 VRM 版本，可转换为 FBX
-    \item \textbf{替代方案}：先用 Unity Asset Store 的免费角色模型调试交互逻辑，
-          待模型到位后再替换
-\end{enumerate}
-
-\begin{quote}
-\small
-\textbf{注意}：以上途径获取的模型仅限个人学习和研究使用，请勿用于商业用途或公开发布。
-\end{quote}
-
-% ═══════════════════════════════════════════
-\section{Live2D 过渡预留}
-% ═══════════════════════════════════════════
-
-为将来迁移至 Live2D 技术，在本项目中预留以下扩展点：
-
-\begin{itemize}
-    \item \textbf{抽象渲染接口}：将宠物渲染抽象为接口 \texttt{IPetRenderer}，
-          当前实现为 3D 模型渲染，后续可替换为 Live2D Cubism SDK 渲染
-    \item \textbf{参数化系统}：当前使用 Unity Animator 的参数（Float/Trigger），
-          与 Live2D 的参数系统（ParamAngleX/ParamEyeLOpen 等）概念一致，
-          便于映射
-    \item \textbf{交互逻辑复用}：拖拽、点击、物理等交互逻辑与渲染方式解耦，
-          更换渲染引擎时无需重写交互代码
-\end{itemize}
-
-\begin{lstlisting}[style=csharp,caption={渲染接口抽象（预留）},label={lst:interface}]
-// 预留的渲染接口，方便后续替换为 Live2D
-public interface IPetRenderer
-{
-    void SetParameter(string name, float value);
-    void PlayAnimation(string animationName);
-    void SetExpression(string expressionName);
-    void SetMouthOpen(float value);    // 说话口型
-    void SetEyeOpen(float left, float right); // 眨眼
-}
-
-// Unity 3D 实现
-public class UnityModelRenderer : MonoBehaviour, IPetRenderer
-{
-    private Animator animator;
-    private SkinnedMeshRenderer meshRenderer;
-
-    public void SetParameter(string name, float value)
-    {
-        if (animator != null)
-            animator.SetFloat(name, value);
-    }
-
-    public void SetEyeOpen(float left, float right)
-    {
-        // 通过 Blend Shape 控制眼睛
-    }
-    // ... 其他接口实现
-}
-
-// 未来: Live2D 实现
-// public class Live2DRenderer : MonoBehaviour, IPetRenderer { ... }
-\end{lstlisting}
-
-% ═══════════════════════════════════════════
-\section{目录结构规划}
-% ═══════════════════════════════════════════
-
-\begin{verbatim}
-Desktop_per_pro/              # Git 仓库根目录
-  |-- README.md               # 项目说明
-  |-- report.pdf              # 本文档（可删除）
-  |-- report.tex              # 本文档源码（可删除）
-  |-- Assets/
-  |     |-- Scenes/
-  |     |     +-- Main.unity  # 主场景
-  |     |-- Scripts/
-  |     |     |-- DesktopPet.cs
-  |     |     |-- DragHandler.cs
-  |     |     |-- WindowOverlay.cs
-  |     |     |-- TouchController.cs
-  |     |     |-- IPetRenderer.cs     # 渲染接口
-  |     |     +-- UnityModelRenderer.cs
   |     |-- Models/
   |     |     +-- FuXuan/             # 符玄模型
   |     |-- Materials/

@@ -18,7 +18,8 @@
 - **拖拽移动** — 按住任意位置拖拽，角色会挣扎划水 + 衣服/头发物理摆动
 - **分区点击反馈** — 点击头部/身体/腿部有不同反应（歪头戳脸/害羞捂胸/踢腿）
 - **右键菜单** — 设置、动作、聊天、便签四标签面板
-- **AI 对话** — 底部输入框 + DeepSeek Function Calling，可调用 27+ 工具
+- **AI 对话** — 底部输入框 + DeepSeek Function Calling，可调用 28+ 工具
+- **文件搜索** — 集成 Everything 实现毫秒级全盘文件搜索，AI 可直接「帮我找文件」
 - **小程序数据互通** — AI 可查询微信小程序服务端的考试安排、课程表、成绩、学业概览
 - **AI 操控角色** — 对话指令即可切换面部表情、播放动作动画、停止动作
 - **点击穿透** — 鼠标在宠物上可交互，在宠物外直接穿透到桌面，无需拖拽"激活"
@@ -43,7 +44,8 @@
 
 ### 🤖 AI 聊天
 - **DeepSeek API** — 集成 DeepSeek Chat + Function Calling，最多 5 轮工具调用循环
-- **27+ 工具** — 打开网页、搜索、截图、调音量、记便签、查天气、查成绩、查课表、查考试、学业概览、切换表情、播放动作等
+- **28+ 工具** — 打开网页、搜索、搜文件（Everything 毫秒级）、截图、调音量、记便签、查天气、查成绩、查课表、查考试、学业概览、切换表情、播放动作等
+- **Everything 文件搜索** — AI 可通过「帮我找文件」调用 `search_files` 工具，优先使用 Everything CLI（es.exe）实现全盘毫秒级搜索，未安装时自动回退递归搜索
 - **小程序数据互通** — 连接微信课表小程序服务端，实时查询学业数据
 - **AI 操控角色** — 直接说"换个开心表情""伸个懒腰"，AI 自动调用表情/动作工具
 - **自动闲聊** — 无操作一段时间后角色主动搭话
@@ -56,6 +58,13 @@
 - **手机推送** — 通过 Server酱³ 推送到手机 App
 - **AI 驱动** — 聊天时直接说"提醒我下午3点买菜"，AI 自动调用工具
 - **服务端同步** — 小程序服务端统一维护提醒队列
+
+### 🔎 文件搜索（Everything 集成）
+- **毫秒级全盘搜索** — 集成 Everything CLI（es.exe），AI 说「帮我找文件」时毫秒级返回结果
+- **自动检测** — 启动时自动搜索 Program Files、LocalAppData 及 PATH 中的 es.exe
+- **智能回退** — 未安装 Everything 时自动切换到递归目录搜索
+- **路径限定** — 支持指定搜索根目录，缩小搜索范围
+- **最多 200 结果** — 防结果过多，必要时可缩小查询词
 
 ### 🏃 物理
 - **CubismPhysics** — 衣服/头发/裙子/配饰自然物理摆动
@@ -98,7 +107,7 @@ Desktop_per_pro/
 │   │   │   ├── IPetRenderer.cs       # 渲染接口
 │   │   │   ├── HybridRenderer.cs     # 混合渲染器
 │   │   │   ├── Model3DRenderer.cs    # 3D 渲染器
-│   │   │   └── ToolCallInvoker.cs    # AI 工具调用分发（24+ 工具）
+│   │   │   └── ToolCallInvoker.cs    # AI 工具调用分发（28+ 工具）
 │   │   ├── Animations/               # 3D 模型动画
 │   │   ├── Editor/                   # 构建脚本
 │   │   ├── Live2D/Models/Fuxuan/     ← 符玄 Live2D 模型
@@ -176,6 +185,7 @@ DesktopPet (主控制器, Update order=0)
 - [Live2D Cubism SDK 5-r.4](https://www.live2d.com/sdk/about/)
 - Newtonsoft.Json（Unity 包管理器安装）
 - Unity UI (UGUI)
+- [Everything CLI (es.exe)](https://www.voidtools.com/downloads/)（可选）— 用于毫秒级全盘文件搜索，下载 `ES-1.1.0.30.x64.zip` 解压到 `%LOCALAPPDATA%\Everything\es.exe` 即可
 
 ## 📄 许可证
 
@@ -256,12 +266,18 @@ DesktopPet (主控制器, Update order=0)
 
 **状态：** 🔧 可按需调整权重使其自然出现（同时需同步更新 LaTeX 文档）
 
-### 6. LaTeX 文档末尾有杂散代码
+### 6. Everything 未安装时文件搜索降级
 
-**现象：** `project_brief/report.tex` 中，在 `\end{document}` 之后存在一段 `TouchController.cs` 骨架代码（约 30 行），属于误粘贴的杂散内容，不应出现在文档中。
+**现象：** 若未安装 Everything（es.exe），`search_files` 工具将自动回退到递归目录搜索模式，速度较慢且仅能搜索桌面目录，全盘搜索不可用。
 
-**具体内容：** 一个 `TouchController : MonoBehaviour` 类的完整骨架，包含 `Start()`、`OnMouseDown()` 方法和 `reactionDuration` 等字段。
+**解决：** 从 [voidtools.com](https://www.voidtools.com/downloads/) 下载 `ES-1.1.0.30.x64.zip`，将 `es.exe` 解压到 `%LOCALAPPDATA%\Everything\es.exe` 即可。
 
-**影响：** 虽然不影响 PDF 编译（LaTeX 会忽略 `\end{document}` 之后的内容），但影响代码文档的整洁性，且该组件在实际项目中已被 `DragHandler.cs` 替代。
+**状态：** 📦 可选依赖
 
-**状态：** ✅ 可在下次编辑 LaTeX 时直接删除
+### 7. 工具调用同步阻塞（待优化）
+
+**现象：** 所有 AI 工具（`search_files`、`query_scores` 等）在当前线程同步执行，阻塞 Unity 主线程。
+
+**影响：** Everything 模式下 `search_files` 为毫秒级，但递归搜索回退时可能阻塞主线程长达 10 秒。异步协程方案已规划但尚未实施。
+
+**状态：** ⏳ 待后续优化

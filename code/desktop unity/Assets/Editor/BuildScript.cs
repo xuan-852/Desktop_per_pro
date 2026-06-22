@@ -9,7 +9,8 @@ public class BuildScript
     public static void BuildDesktopPet()
     {
         string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-        string buildDir = Path.Combine(projectRoot, "..", "..", "Build");
+        // 统一输出到 D:\Unity\projects\Desktop_per_pro\Build\
+        string buildDir = Path.GetFullPath(Path.Combine(projectRoot, "..", "..", "Build"));
         string buildPath = Path.Combine(buildDir, "DesktopPet.exe");
 
         if (!Directory.Exists(buildDir))

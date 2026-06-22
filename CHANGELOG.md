@@ -1,5 +1,19 @@
 # 改动日志
 
+## N16 (2026-06-20)
+
+### ✨ 新功能
+- **Everything 毫秒级文件搜索** — 集成 Everything CLI（es.exe），`search_files` 工具优先调用 Everything 实现全盘毫秒级搜索，未安装时自动回退递归搜索
+- **Everything CLI 自动检测** — 启动时自动扫描 Program Files、LocalAppData 及 PATH，智能定位 es.exe
+
+### 🐛 修复
+- **文件搜索 3 秒超时** — 根因：AI 使用 `run_command` 的 `dir /s` 搜索文件，但 `p.WaitForExit(3000)` 仅 3 秒即 `p.Kill()`
+  - 创建专用 `search_files` 工具，Task.Run 异步执行 + 10 秒超时
+  - 重写为 Everything CLI 优先（毫秒级），回退递归搜索
+  - 系统提示词新增「搜文件铁则」引导 AI 使用正确工具
+
+---
+
 ## N15 (2026-06-20)
 
 ### 🐛 修复
