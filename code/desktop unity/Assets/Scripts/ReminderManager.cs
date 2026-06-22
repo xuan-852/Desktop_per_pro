@@ -403,14 +403,15 @@ public class ReminderManager : MonoBehaviour
             _data = new ReminderList();
         }
 
-        // 清理已过期且不重复的已完成提醒（超过 7 天）
+        // 兜底清理：过期超过 1 天的一次性提醒（正常应触发即删，此逻辑防异常残留）
         try
         {
-            _data.reminders.RemoveAll(r =>
-                r.done
-                && string.IsNullOrEmpty(r.recurring)
+            int cleaned = _data.reminders.RemoveAll(r =>
+                string.IsNullOrEmpty(r.recurring)
                 && DateTime.TryParse(r.remindAt, out var dt)
-                && (DateTime.Now - dt).TotalDays > 7);
+                && (DateTime.Now - dt).TotalDays > 1);
+            if (cleaned > 0)
+                Debug.Log($"[ReminderManager] 加载时兜底清理了 {cleaned} 条过期一次性提醒");
         }
         catch { }
     }
