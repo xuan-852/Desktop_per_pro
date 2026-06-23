@@ -631,7 +631,7 @@ public class ToolCallInvoker : MonoBehaviour
       ""parameters"": {
         ""type"": ""object"",
         ""properties"": {
-          ""name"": { ""type"": ""string"", ""description"": ""应用名称或文件路径，如 calc、notepad、D:\path\file.txt"" }
+          ""name"": { ""type"": ""string"", ""description"": ""应用名称或文件路径，如 calc、notepad、D:/path/file.txt"" }
         },
         ""required"": [""name""]
       }
