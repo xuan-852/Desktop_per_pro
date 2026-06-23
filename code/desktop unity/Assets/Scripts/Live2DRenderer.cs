@@ -337,6 +337,10 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     private float[] _savedLeftArmWeights;
     private bool _leftArmPhysicsSaved = false;
 
+    // 平滑转身：方向切换时 scale.x 用 Lerp 过渡
+    private float _smoothScaleX = 1f;
+    const float TURN_SPEED = 10f; // 转身速度（越大越快），≈0.15 秒完成
+
     // 拖拽平滑转身
     private float _dragSmoothBodyY = 0f;
     // 拖拽速度追踪（帧间 petX 增量，平滑后驱动物理和输出）
@@ -2136,12 +2140,25 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
         _modelRoot.transform.position = worldPos;
 
-        // 根据朝向翻转（直接设置scale，不基于当前值）
-        bool faceRight = _pet.petVx >= 0;
-        Vector3 scale = new Vector3(modelScale, modelScale, 1f);
-        // 拖拽中不翻转 scale.x（用 ParamBodyAngleY 平滑转身，避免鼠标微晃时模型 180° 弹跳）
-        if (!_pet.isDragging)
-            scale.x *= (faceRight ? 1 : -1);
+        // ★ 平滑转身：用 Lerp 渐变 scale.x，避免瞬间 180° 翻转
+        float targetSign;
+        if (_pet.isDragging)
+        {
+            // 拖拽中保持当前方向（用 ParamBodyAngleY 平滑转身）
+            targetSign = _smoothScaleX >= 0 ? 1f : -1f;
+        }
+        else if (_pet.petVx > 0)
+            targetSign = 1f;
+        else if (_pet.petVx < 0)
+            targetSign = -1f;
+        else
+            targetSign = _smoothScaleX >= 0 ? 1f : -1f; // 速度=0 保持最后方向
+
+        _smoothScaleX = Mathf.Lerp(_smoothScaleX, targetSign, Time.deltaTime * TURN_SPEED);
+        if (Mathf.Abs(_smoothScaleX - targetSign) < 0.005f)
+            _smoothScaleX = targetSign;
+
+        Vector3 scale = new Vector3(modelScale * _smoothScaleX, modelScale, 1f);
         _modelRoot.transform.localScale = scale;
     }
 
