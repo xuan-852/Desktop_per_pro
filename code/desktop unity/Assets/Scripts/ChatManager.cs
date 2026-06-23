@@ -93,6 +93,8 @@ public class ChatManager : MonoBehaviour
     public System.Action<string, string> OnToolResult; // (toolName, result)
     /// <summary>逐句切换时触发（参数：当前句子, 索引, 总数）</summary>
     public System.Action<string, int, int> OnSentenceChanged;
+    /// <summary>API 请求出错时触发（用于显示错误提示）</summary>
+    public System.Action<string> OnRequestError;
 
     // ==================================================================
     //  状态
@@ -103,6 +105,10 @@ public class ChatManager : MonoBehaviour
     private string _lastReply = "";
     private string _lastError = "";
     private System.Action _onUpdate;
+
+    // ---- 请求看门狗：防止 API 卡死永久锁住 _isWaiting ----
+    private float _requestStartTime = 0f;
+    private const float REQUEST_TIMEOUT = 60f; // 60 秒无响应视为卡死
 
     // ---- 消息队列：等待时输入不会丢 ----
     private Queue<(string text, System.Action onUpdate)> _messageQueue
@@ -167,6 +173,7 @@ public class ChatManager : MonoBehaviour
         _isWaiting = true;
         _lastReply = "";
         _lastError = "";
+        _requestStartTime = Time.time; // 启动看门狗计时
         _onUpdate = onUpdate;
         StartCoroutine(SendRequestCoroutine());
     }
@@ -182,6 +189,7 @@ public class ChatManager : MonoBehaviour
         yield return StartCoroutine(DoToolLoop());
 
         _isWaiting = false;
+        _requestStartTime = 0f; // 请求完成，停止看门狗
         _onUpdate?.Invoke();
 
         // ——— 处理队列中的下一条消息 ———
@@ -201,7 +209,12 @@ public class ChatManager : MonoBehaviour
 
             // ——— 发送请求 ———
             yield return StartCoroutine(PostRequest(jsonBody, j => responseJson = j));
-            if (responseJson == null) yield break; // 出错
+            if (responseJson == null)
+            {
+                Debug.LogError($"[ChatManager] ❌ API 请求失败 (round={round}): {_lastError}");
+                OnRequestError?.Invoke($"❌ 法阵术式失败: {_lastError}");
+                yield break; // 出错
+            }
 
             // ——— 提取 tool_calls 和 content ———
             string content = ExtractContent(responseJson);
@@ -294,6 +307,25 @@ public class ChatManager : MonoBehaviour
 
     void Update()
     {
+        // ——— 请求看门狗：如果 _isWaiting 超过 60 秒无响应，强制释放 ———
+        if (_isWaiting && _requestStartTime > 0f && Time.time - _requestStartTime > REQUEST_TIMEOUT)
+        {
+            Debug.LogWarning($"[ChatManager] ⏰ 请求超时 ({REQUEST_TIMEOUT}s)，强制释放 _isWaiting");
+            string errMsg = $"⏰ 法阵响应超时（>{REQUEST_TIMEOUT}秒），请检查网络或 API 状态";
+            _lastError = errMsg;
+            OnRequestError?.Invoke(errMsg);
+            _isWaiting = false;
+            _requestStartTime = 0f;
+            _onUpdate?.Invoke();
+            // 继续处理队列中的消息
+            if (_messageQueue.Count > 0)
+            {
+                var next = _messageQueue.Dequeue();
+                SendMessage(next.text, next.onUpdate);
+            }
+            return;
+        }
+
         if (!_isSentenceAnimating || _sentenceList.Count == 0) return;
 
         _sentenceTimer += Time.deltaTime;

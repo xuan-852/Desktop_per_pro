@@ -104,6 +104,7 @@ public class AutoChat : MonoBehaviour
         {
             _chat.OnNewReply += HandleNewReply;
             _chat.OnSentenceChanged += HandleSentenceChanged;
+            _chat.OnRequestError += HandleRequestError;
         }
 
         // 首次问候
@@ -125,6 +126,7 @@ public class AutoChat : MonoBehaviour
         {
             _chat.OnNewReply -= HandleNewReply;
             _chat.OnSentenceChanged -= HandleSentenceChanged;
+            _chat.OnRequestError -= HandleRequestError;
         }
     }
 
@@ -194,6 +196,13 @@ public class AutoChat : MonoBehaviour
         {
             _bubble.ExtendDuration(aiReplyDuration);
         }
+    }
+
+    /// <summary>API 请求出错时显示错误信息到气泡</summary>
+    private void HandleRequestError(string error)
+    {
+        if (_bubble == null) return;
+        _bubble.ShowMessage("⚠️ " + error, 8f, ChatBubble.MsgPriority.High);
     }
 
     // ===== 困惑检测 =====
