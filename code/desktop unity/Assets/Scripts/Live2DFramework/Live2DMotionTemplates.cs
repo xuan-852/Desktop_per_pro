@@ -721,40 +721,7 @@ public static class Live2DMotionTemplates
         }
 
         // ================================================================
-        //  动作6: 爱心眨眼
-        // ================================================================
-        public static class Action6_HeartEyes
-        {
-            const float DURATION = 3f;
-            const float TILT = 12f;
-            const float SMILE = 0.8f;
-            public static float Duration => DURATION;
-
-            public static void Update(float elapsed, MotionOutput output)
-            {
-                float t = Mathf.Clamp01(elapsed / DURATION);
-                float eased = Mathf.Sin(t * Mathf.PI);
-
-                float heartPulse = (Mathf.Sin(elapsed * 6f) + 1f) * 0.5f * eased;
-                output.Set("eye_heart", heartPulse);
-                output.Set("head_angle_z", Mathf.Sin(elapsed * 2f) * eased * TILT);
-                output.Set("eye_l_smile", eased * SMILE);
-                output.Set("eye_r_smile", eased * SMILE);
-                output.Set("body_angle_z", Mathf.Sin(elapsed * 2f) * eased * 4f);
-            }
-
-            public static void Cleanup(MotionOutput output)
-            {
-                output.Set("eye_heart", 0f);
-                output.Set("head_angle_z", 0f);
-                output.Set("eye_l_smile", 0f);
-                output.Set("eye_r_smile", 0f);
-                output.Set("body_angle_z", 0f);
-            }
-        }
-
-        // ================================================================
-        //  动作7: 数钱钱
+        //  动作7: 数钱钱（已删除）
         // ================================================================
         public static class Action7_Money
         {
@@ -1057,8 +1024,8 @@ public static class Live2DMotionTemplates
                 case 3: Action3_Brow.Cleanup(output); break;
                 case 4: Action4_StarSpin.Cleanup(output); break;
                 case 5: Action5_Stretch.Cleanup(output); break;
-                case 6: Action6_HeartEyes.Cleanup(output); break;
-                case 7: Action7_Money.Cleanup(output); break;
+                case 6: break; // 已删除
+                case 7: break; // 已删除
                 case 8: Action8_Cry.Cleanup(output); break;
                 case 9: Action9_MagicCircle.Cleanup(output); break;
                 case 10: Action10_Blush.Cleanup(output); break;

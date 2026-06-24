@@ -1,3 +1,5 @@
+using UnityEngine;
+
 /// <summary>
 /// 宠物渲染器接口 — 抽象 PNG 渲染和 Live2D 渲染的差异
 /// </summary>
@@ -7,8 +9,8 @@ public interface IPetRenderer
     void ShowDragPose();
 
     /// <summary>切换到点击姿势</summary>
-    /// <param name="hitNormY">点击位置归一化 Y（0=头顶，1=脚底）</param>
-    void ShowClickPose(float hitNormY);
+    /// <param name="screenPos">鼠标在屏幕上的位置（Unity 坐标，左下原点）</param>
+    void ShowClickPose(Vector2 screenPos);
 
     /// <summary>切换到落地姿势</summary>
     void ShowLandPose();

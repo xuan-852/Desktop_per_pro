@@ -248,12 +248,13 @@ public class DragHandler : MonoBehaviour
             }
             else if (_isClickCandidate)
             {
-                // 计算点击位置在宠物身上的归一化 Y（0=头顶，1=脚底）
+                // ★ 传递鼠标屏幕位置给渲染器，由渲染器做精确射线检测
                 Vector2 clickPos = _dragStartMouse;
-                float hitNormY = Mathf.Clamp01((clickPos.y - _pet.petY) / _pet.petHeight);
-                if (_renderer != null) _renderer.ShowClickPose(hitNormY);
+                // 转换为 Unity 屏幕坐标（左下角原点，Y 向上）
+                Vector2 unityScreenPos = new Vector2(clickPos.x, Screen.height - clickPos.y);
+                if (_renderer != null) _renderer.ShowClickPose(unityScreenPos);
                 _pet.Pause(clickPauseDuration);
-                Debug.Log($"[DragHandler] 轻击宠物 hitNormY={hitNormY:F2}");
+                Debug.Log($"[DragHandler] 轻击宠物 pos=({unityScreenPos.x:F0},{unityScreenPos.y:F0})");
                 OnPetClicked?.Invoke();
             }
 

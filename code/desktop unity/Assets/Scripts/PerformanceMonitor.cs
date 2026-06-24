@@ -295,10 +295,7 @@ public class PerformanceMonitor : MonoBehaviour
         PerformanceTier.High => 60f, PerformanceTier.Normal => 40f, PerformanceTier.Low => 20f, _ => 60f
     };
 
-    private static float GetResolutionScale(PerformanceTier t) => t switch
-    {
-        PerformanceTier.High => 1.0f, PerformanceTier.Normal => 0.75f, PerformanceTier.Low => 0.5f, _ => 1.0f
-    };
+    private static float GetResolutionScale(PerformanceTier t) => 1.0f; // 始终全分辨率，防放大马赛克
 }
 
 public enum PerformanceTier { High = 2, Normal = 1, Low = 0 }

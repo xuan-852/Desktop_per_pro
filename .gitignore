@@ -2,10 +2,29 @@
 # Unity 项目
 # ================
 code/desktop unity/[Ll]ibrary/
+[Ll]ibrary/
 code/desktop unity/[Tt]emp/
 code/desktop unity/[Oo]bj/
 code/desktop unity/[Bb]uild/
+[Bb]uild/
 code/desktop unity/[Bb]uilds/
+
+# ================
+# 运行日志 / 崩溃日志 / 测试日志
+# ================
+crash_log*.txt
+run_log*.txt
+editor_test*.txt
+
+# ================
+# 构建辅助
+# ================
+build_temp.cmd
+
+# ================
+# VS Code 配置
+# ================
+.vscode/
 
 # ================
 # LaTeX 构建产物

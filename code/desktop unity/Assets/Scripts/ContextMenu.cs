@@ -464,8 +464,8 @@ public class ContextMenu : MonoBehaviour
         GUILayout.Space(2);
 
         DrawActionButtonRow("tilt", "歪头", "smile", "微笑", "brow", "挑眉");
-        DrawActionButtonRow("idle:4", "星辉", "stretch", "伸懒腰", "heart_eyes", "爱心");
-        DrawActionButtonRow("money", "数钱", "cry", "委屈", "magic_circle", "法阵");
+        DrawActionButtonRow("idle:4", "星辉", "stretch", "伸懒腰", "", "");
+        DrawActionButtonRow("cry", "委屈", "idle:9", "法阵", "", "");
         DrawActionButtonRow("blush", "害羞", null, null, null, null);
 
         GUILayout.Space(8);

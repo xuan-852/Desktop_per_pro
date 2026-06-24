@@ -486,8 +486,11 @@ public class Live2DParameterVerifier : EditorWindow
     {
         _cdiNames.Clear();
 
+        if (_model == null) return;
+
         // 搜索模型所在目录的 cdi3.json
         string modelPath = AssetDatabase.GetAssetPath(_model);
+        if (string.IsNullOrEmpty(modelPath)) return;
         string modelDir = Path.GetDirectoryName(modelPath);
         string cdiPath = "";
 
@@ -688,11 +691,15 @@ public class Live2DParameterVerifier : EditorWindow
         {
             entry.sliderValue = newVal;
             entry.parameter.Value = newVal;
+            if (_model != null) _model.ForceUpdateNow();
+            SceneView.RepaintAll();
         }
         if (GUILayout.Button("复位", GUILayout.Width(40)))
         {
             entry.sliderValue = entry.defaultValue;
             entry.parameter.Value = entry.defaultValue;
+            if (_model != null) _model.ForceUpdateNow();
+            SceneView.RepaintAll();
         }
         EditorGUILayout.EndHorizontal();
 

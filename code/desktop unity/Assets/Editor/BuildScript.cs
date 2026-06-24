@@ -8,9 +8,8 @@ public class BuildScript
 {
     public static void BuildDesktopPet()
     {
-        string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
-        // 统一输出到 D:\Unity\projects\Desktop_per_pro\Build\
-        string buildDir = Path.GetFullPath(Path.Combine(projectRoot, "..", "..", "Build"));
+        // ★ 用硬编码绝对路径
+        string buildDir = @"D:\Unity\projects\Desktop_per_pro\Build";
         string buildPath = Path.Combine(buildDir, "DesktopPet.exe");
 
         if (!Directory.Exists(buildDir))
@@ -22,7 +21,6 @@ public class BuildScript
 
         if (scenes == null || scenes.Length == 0)
         {
-            // 回退：手动找场景
             string[] guids = AssetDatabase.FindAssets("t:Scene");
             if (guids.Length > 0)
             {

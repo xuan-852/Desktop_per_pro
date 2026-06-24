@@ -1,7 +1,11 @@
 using Live2D.Cubism.Core;
 using Live2D.Cubism.Framework;
 using Live2D.Cubism.Framework.Physics;
+using Live2D.Cubism.Framework.Raycasting;
+using Live2D.Cubism.Rendering;
+using Live2D.Cubism.Framework.Json;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using UnityEngine;
 
@@ -28,7 +32,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     // ===================================================================
     // ===== 🎛️ 调参区 — 改这里 =====
     // ===================================================================
-    const float LIVE2D_SCALE       = 56.25f; // 模型缩放（越大→模型越大）
+    const float LIVE2D_SCALE       = 56.2f; // 模型缩放（越大→模型越大）
     const float LIVE2D_OFFSET_Y    = 0f;      // 垂直偏移（正数=下移，负数=上移）
     // ===================================================================
 
@@ -63,17 +67,6 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     const float STRETCH_MOUTH_OPEN = 0.6f;   // 张嘴
     const float STRETCH_EYE_CLOSE  = 0.4f;   // 眯眼
 
-    // 动作3: 爱心眨眼（爱心眼 + 歪头微笑）
-    const float HEART_DURATION     = 3f;
-    const float HEART_EYE          = 1f;     // 爱心眼
-    const float HEART_TILT         = 12f;    // 歪头
-    const float HEART_SMILE        = 0.8f;   // 微笑
-
-    // 动作7: 数钱钱 💰
-    const float MONEY_DURATION     = 3.5f;
-    const float MONEY_SMILE        = 0.6f;   // 微笑幅度
-    const float MONEY_TILT         = 10f;    // 歪头幅度
-    const float MONEY_SWAY         = 4f;     // 身体摇摆幅度
 
     // 动作8: 委屈 😢
     const float CRY_DURATION       = 3.5f;
@@ -98,6 +91,13 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
     // 动作9: 法阵显现 ✨（起势→剑指朝天结印→指尖凝光→扩散至全屏→消散）
     const float CIRCLE_DURATION       = 8.0f;
+    // -- 法阵斜飞物理飘动 --
+    const float CIRCLE_FLOAT_AMPLITUDE_BODY = 4f;    // 身体X轴漂移幅度 ±4°
+    const float CIRCLE_FLOAT_AMPLITUDE_HEAD = 3f;    // 头部X轴漂移幅度 ±3°
+    const float CIRCLE_FLOAT_SPEED         = 0.4f;   // Perlin 噪声速度
+    const float CIRCLE_SPRING_STIFF        = 12f;    // 弹簧刚度（越大回正越快）
+    const float CIRCLE_SPRING_DAMP_BOUNCE  = 3f;     // 弹性惯性模式阻尼（欠阻尼=有回弹）
+    const float CIRCLE_SPRING_DAMP_SOFT    = 9f;     // 柔软跟随模式阻尼（临界阻尼=无过冲）
     // -- 走路（侧面视角）--
     // 模型转体侧面，腿/手臂摆动可见
     // bodyAngleY符号由方向决定（翻转后视觉一致）
@@ -231,7 +231,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
     [Header("显示设置（改顶部 LIVE2D_SCALE / LIVE2D_OFFSET_Y 宏）")]
     [Tooltip("模型缩放")]
-    public float modelScale = LIVE2D_SCALE;
+    public float modelScale = 56.2f;
 
     [Tooltip("模型垂直偏移（像素）")]
     public float verticalOffset = LIVE2D_OFFSET_Y;
@@ -257,6 +257,21 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     private int _overlayScreenW = 0;
     private int _overlayScreenH = 0;
 
+    // ===== 射线触摸检测 =====
+    private CubismRaycaster _cubismRaycaster;
+    private readonly CubismRaycastHit[] _raycastResults = new CubismRaycastHit[32];
+
+    /// <summary>身体部位枚举</summary>
+    public enum BodyPart
+    {
+        Head,       // 头
+        Body,       // 身体/躯干
+        Arm,        // 手臂
+        Leg,        // 腿/脚
+        Dress,      // 裙子/服饰
+        Other       // 其他（头发/饰品等）
+    }
+
     // 姿势锁定
     private bool _poseLocked = false;
     private float _poseLockUntil = 0f;
@@ -275,13 +290,24 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     // 随机小动作（站立时触发）
     private float _idleActionTime = 0f;
     private float _idleActionInterval = 8f;
-    private int _currentIdleAction = 0; // 0=无, 1=歪头, 2=微笑, 3=挑眉, 4=星辉, 5=伸懒腰, 6=爱心眼, 7=数钱, 8=委屈, 9=法阵, 10=害羞, 11=困惑
+    private int _currentIdleAction = 0; // 0=无, 1=歪头, 2=微笑, 3=挑眉, 4=星辉, 5=伸懒腰, 6=委屈, 7=法阵, 8=害羞, 9=困惑
     // 各动作权重（对应动作 1-11），值越大出现概率越高（11号权重0=不自发触发，仅外部强制调用）
     private readonly int[] _idleActionWeights = new int[] { 5, 5, 3, 2, 2, 3, 2, 3, 1, 3, 0 };
     // 复合动作相位（用于多参数协同插值）
     private float _complexActionPhase = 0f;
     // 动作结束后的冷却时间（防动作无限重播）
     private float _idleActionCooldown = 0f;
+
+    // 法阵斜飞物理飘动 — Spring-Damper 状态
+    private float _magicFloatPhase = 0f;       // Perlin 噪声相位
+    private float _magicSpringPosX = 0f;        // 弹簧位置（身体ParamBodyAngleX偏移）
+    private float _magicSpringVelX = 0f;        // 弹簧速度
+    private float _magicSpringPosH = 0f;        // 弹簧位置（头部ParamAngleX偏移）
+    private float _magicSpringVelH = 0f;        // 弹簧速度
+    private float _magicDamping;               // 当前阻尼系数（随机选弹性/柔软）
+    private float _magicModeTimer = 0f;         // 模式切换计时
+    private float _magicModeDuration = 0f;      // 当前模式持续时长
+    private bool _magicModeBouncy = true;       // true=弹性惯性, false=柔软跟随
 
     // 随机微动用噪声偏移
     private float _noiseTimeX = 0f;
@@ -362,7 +388,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         Debug.Log($"[Live2DRenderer] DesktopPet={(_pet != null)}, DragHandler={(_dragHandler != null)}, ChatBubble={(_chatBubble != null)}, TimeWeatherController={(_timeController != null)}");
 
         // ★ 强制从宏读取（忽略场景中序列化的旧值，改宏立即生效）
-        modelScale = LIVE2D_SCALE;
+        modelScale = 56.2f;
         verticalOffset = LIVE2D_OFFSET_Y;
 
         TryLoadModel();
@@ -388,9 +414,19 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             modelPrefab = Resources.Load<GameObject>("Live2D/Models/Fuxuan/符玄");
         }
 
+        // ★ 运行时降级：从 StreamingAssets 用 CubismModel3Json 加载
+        if (modelPrefab == null && _modelRoot == null)
+        {
+            TryLoadFromStreamingAssets();
+        }
+
         if (modelPrefab != null)
         {
             _modelRoot = Instantiate(modelPrefab, transform);
+        }
+
+        if (_modelRoot != null)
+        {
             
 #if UNITY_EDITOR
             // 编辑器调试：使用场景预设的相机参数
@@ -413,6 +449,34 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             _cubismModel = _modelRoot.GetComponentInChildren<CubismModel>();
             _physicsController = _modelRoot.GetComponentInChildren<CubismPhysicsController>();
             _paramStore = _modelRoot.GetComponentInChildren<CubismParameterStore>();
+
+            // ★ 初始化 CubismRaycaster（射线触摸检测）
+            _cubismRaycaster = _modelRoot.GetComponentInChildren<CubismRaycaster>();
+            if (_cubismRaycaster == null)
+            {
+                _cubismRaycaster = _modelRoot.AddComponent<CubismRaycaster>();
+                Debug.Log("[Live2DRenderer] ✓ 自动添加 CubismRaycaster");
+            }
+
+            // ★ 为所有 Drawable 添加 CubismRaycastable 组件，实现精确模型碰撞
+            int raycastableCount = 0;
+            foreach (var drawable in _cubismModel.Drawables)
+            {
+                if (drawable.GetComponent<CubismRaycastable>() == null)
+                {
+                    drawable.gameObject.AddComponent<CubismRaycastable>();
+                    raycastableCount++;
+                }
+            }
+            // 刷新 raycaster 缓存（Refresh 是 private 方法，通过反射调用）
+            var refreshMethod = typeof(CubismRaycaster).GetMethod("Refresh",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (refreshMethod != null)
+                refreshMethod.Invoke(_cubismRaycaster, null);
+            Debug.Log($"[Live2DRenderer] ✓ 为 {raycastableCount} 个 Drawable 添加了 CubismRaycastable");
+
+            // ★ 计算模型 Drawable 的 Y 轴范围，用于触摸部位分类
+            CacheDrawableClassificationBounds();
 
             // ★ 通过反射获取"手臂L"物理子刚体引用（Rig 是私有属性）
             if (_physicsController != null)
@@ -492,6 +556,77 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         }
     }
     
+    /// <summary>
+    /// ★ 运行时从 StreamingAssets 用 CubismModel3Json API 加载模型
+    /// </summary>
+    private void TryLoadFromStreamingAssets()
+    {
+        string modelJsonPath = Path.Combine(Application.streamingAssetsPath, "Live2D", "Fuxuan", "符玄.model3.json");
+        Debug.Log($"[Live2DRenderer] 尝试 StreamingAssets 加载: {modelJsonPath}");
+
+        if (!File.Exists(modelJsonPath))
+        {
+            Debug.LogError($"[Live2DRenderer] StreamingAssets 模型文件不存在: {modelJsonPath}");
+            return;
+        }
+
+        // 使用自定义加载委托读取 StreamingAssets 中的文件
+        CubismModel3Json.LoadAssetAtPathHandler loadHandler = (System.Type assetType, string assetPath) =>
+        {
+            if (!File.Exists(assetPath))
+            {
+                Debug.LogWarning($"[Live2DRenderer] 引用的文件不存在: {assetPath}, assetType={assetType}");
+                return null;
+            }
+
+            if (assetType == typeof(string))
+            {
+                return File.ReadAllText(assetPath);
+            }
+            else if (assetType == typeof(byte[]))
+            {
+                return File.ReadAllBytes(assetPath);
+            }
+            else if (assetType == typeof(Texture2D))
+            {
+                byte[] imageData = File.ReadAllBytes(assetPath);
+                Texture2D tex = new Texture2D(2, 2);
+                if (tex.LoadImage(imageData))
+                    return tex;
+                Debug.LogWarning($"[Live2DRenderer] 纹理加载失败: {assetPath}");
+                return null;
+            }
+
+            Debug.LogWarning($"[Live2DRenderer] 未处理的资源类型: {assetType}, path={assetPath}");
+            return null;
+        };
+
+        CubismModel3Json modelJson = CubismModel3Json.LoadAtPath(modelJsonPath, loadHandler);
+        if (modelJson == null)
+        {
+            Debug.LogError("[Live2DRenderer] CubismModel3Json.LoadAtPath 返回 null");
+            return;
+        }
+
+        CubismModel model = modelJson.ToModel(
+            CubismBuiltinPickers.MaterialPicker,
+            CubismBuiltinPickers.TexturePicker,
+            shouldImportAsOriginalWorkflow: true
+        );
+
+        if (model == null)
+        {
+            Debug.LogError("[Live2DRenderer] modelJson.ToModel 返回 null");
+            return;
+        }
+
+        _modelRoot = model.gameObject;
+        _modelRoot.transform.SetParent(transform, false);
+        _modelRoot.name = "符玄 (StreamingAssets)";
+
+        Debug.Log($"[Live2DRenderer] ✓ StreamingAssets 加载成功: {_modelRoot.name}");
+    }
+
     private System.Collections.IEnumerator CheckRendererStatus()
     {
         yield return new WaitForSeconds(0.1f); // 延迟检查
@@ -618,7 +753,8 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         }
 
         // ★ 点击/摸头锁定中 → 重新设置被物理覆盖的参数
-        if (_poseLocked && Time.time < _poseLockUntil)
+        // ★ 但如果已有强制动作（如法阵），跳过点击锁定，让动作驱动参数
+        if (_poseLocked && Time.time < _poseLockUntil && !_actionLocked)
         {
             foreach (var kv in _clickSavedParams)
                 SetParameter(kv.Key, kv.Value);
@@ -635,6 +771,18 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         _breathPhase += Time.deltaTime * 2.0f;
 
         UpdateBlink();
+
+        // ★ 每帧强制清零眼睛白覆盖层和高光（防 Cubism 物理/表情预设覆盖）
+        //    法阵动作已在 UpdateMagicCircle() 中设置了这些值，此处是全局安全网
+        SetParameter("Param132", 0f);
+        SetParameter("Param63", 0f);
+        SetParameter("Param64", 0f);
+        SetParameter("Param65", 0f);
+        SetParameter("Param67", 0f);
+        SetParameter("Param68", 0f);
+        SetParameter("Param69", 0f);
+        SetParameter("Param70", 0f);
+        SetParameter("Param71", 0f);
 
         // ★ 走路/空闲统一在 LateUpdate 中设置参数
         // 此时 _walkPhase 已在 Update() 中更新完毕，相位准确
@@ -758,15 +906,13 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         // ★ 强制网格更新：Cubism 的网格在 Update() 阶段已用 C++ 核心算完，
         //    Physics(800) 覆盖了衣服参数，我们(801)覆盖了手臂参数，
         //    但网格仍是旧参数结果，需强制刷新用最新参数重新算一遍。
-        // ★ 优化：WallHit、走路、眼球追踪、调试偏移统一一次 ForceUpdateNow
+        // ★ 每帧都 ForceUpdateNow：因为眼睛保护参数（Param132等）每帧都设了值，
+        //   如果不强制更新，C++ 核心保留旧值（如法阵动作残留的非零 Param132），
+        //   导致眼睛持续发白。无条件执行确保参数始终被渲染引擎采纳。
         bool hasActiveAction = (_currentIdleAction > 0 && _idleActionTime > 0f);
         bool debugOffsetActive = (debugOffsetEnabled && !_actionLocked && !hasActiveAction && debugOffsets != null && debugOffsets.Count > 0);
         // ★ 重要：空闲动作（如星辉/伸懒腰）也要 ForceUpdate，否则物理系统覆盖了我们的值
-        bool needsForceUpdate = _actionLocked || isWalking || _walkBlendRemaining > 0f || hasActiveAction || eyeOverridden || _wallHitTime > 0f || debugOffsetActive;
-        if (needsForceUpdate)
-        {
-            _cubismModel.ForceUpdateNow();
-        }
+        _cubismModel.ForceUpdateNow();
 
         // ============================================================
         // ★ 左臂(Param34/36/37) 物理拦截：双重 ForceUpdate + 权重归零
@@ -844,6 +990,32 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
             // ★ 调试偏移的第二次 ForceUpdate (无法合并，因为偏移值在第一次 ForceUpdate 后才读取到的 animVal)
             _cubismModel.ForceUpdateNow();
+        }
+
+        // ============================================================
+        // ★ ArtMesh 渲染层调试日志 — 记录所有非默认渲染状态的 Drawable
+        //    每 30 帧记录一次（即使 actionLocked 也要记录！）
+        // ============================================================
+        if (Time.frameCount % 30 == 0 && _cubismModel?.Drawables != null)
+        {
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            string prefix = _actionLocked ? "[EYE_MESH_LOCKED]" : "[EYE_MESH]";
+            int count = 0;
+            foreach (var drawable in _cubismModel.Drawables)
+            {
+                var multColor = drawable.MultiplyColor;
+                var screenColor = drawable.ScreenColor;
+                // 记录任何 MultiplyColor 非白色或 ScreenColor 非透明的 ArtMesh
+                if (multColor.r < 0.99f || multColor.g < 0.99f || multColor.b < 0.99f || multColor.a < 0.99f ||
+                    screenColor.r > 0.01f || screenColor.g > 0.01f || screenColor.b > 0.01f || screenColor.a > 0.01f)
+                {
+                    sb.Append($" [{drawable.name}](id={drawable.Id}) mul=({multColor.r:F2},{multColor.g:F2},{multColor.b:F2},{multColor.a:F2})" +
+                        $" scr=({screenColor.r:F2},{screenColor.g:F2},{screenColor.b:F2},{screenColor.a:F2})");
+                    count++;
+                }
+            }
+            if (count > 0)
+                Debug.Log($"{prefix} found={count}:{sb.ToString()}");
         }
 
         // ============================================================
@@ -1152,8 +1324,19 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             }
         }
 
+        // === 每帧强制清零眼睛白覆盖层和高光参数（防 Cubism 物理/默认值覆盖）===
+        SetParameter("Param132", 0f); // 白色覆盖层（使眼变白）
+        SetParameter("Param63", 0f);  // 高光R1
+        SetParameter("Param64", 0f);  // 高光R2
+        SetParameter("Param65", 0f);  // 光点R1
+        SetParameter("Param67", 0f);  // 高光L1
+        SetParameter("Param68", 0f);  // 高光L2
+        SetParameter("Param69", 0f);  // 光点R2
+        SetParameter("Param70", 0f);  // 光点L1
+        SetParameter("Param71", 0f);  // 光点L2
+
         // === 空闲动作：加权随机选取（权重越高越容易出现）===
-        // 动作: 1=歪头, 2=微笑, 3=挑眉, 4=星辉, 5=伸懒腰, 6=爱心眼, 7=数钱, 8=委屈, 9=法阵, 10=害羞
+        // 动作: 1=歪头, 2=微笑, 3=挑眉, 4=星辉, 5=伸懒腰, 6=委屈, 7=法阵, 8=害羞
 
         // ★ 暂停时（菜单打开），不播新动作
         bool isPaused = (_pet != null && _pet.isPaused);
@@ -1182,8 +1365,8 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
                 case 3: UpdateIdleBrow(); break;
                 case 4: UpdateStarSpin(); break;
                 case 5: UpdateStretch(); break;
-                case 6: UpdateHeartEyes(); break;
-                case 7: UpdateMoney(); break;
+                case 6: break; // 已删除
+                case 7: break; // 已删除
                 case 8: UpdateCry(); break;
                 case 9: UpdateMagicCircle(); break;
                 case 10: UpdateBlush(); break;
@@ -1530,68 +1713,6 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     }
 
     /// <summary>
-    /// 动作6: 爱心眨眼 💕
-    /// 爱心眼出现 + 歪头 + 微笑
-    /// </summary>
-    private void UpdateHeartEyes()
-    {
-        float p = _complexActionPhase;
-        float duration = HEART_DURATION;
-
-        float t = Mathf.Clamp01(p / duration);
-        float eased = Mathf.Sin(t * Mathf.PI);
-
-        // 爱心眼闪烁
-        float heartPulse = (Mathf.Sin(p * 6f) + 1f) * 0.5f * eased;
-        SetParameter("Param109", heartPulse);     // 爱心眼
-
-        // 歪头 + 微笑
-        float tiltPulse = Mathf.Sin(p * 2f) * eased;
-        SetParameter("ParamAngleZ", tiltPulse * HEART_TILT);
-        SetParameter("ParamEyeLSmile", eased * HEART_SMILE);
-        SetParameter("ParamEyeRSmile", eased * HEART_SMILE);
-
-        // 身体微倾
-        SetParameter("ParamBodyAngleZ", tiltPulse * 4f);
-
-        if (t >= 1f) ResetIdleAction();
-    }
-
-    /// <summary>
-    /// 动作7: 数钱钱 💰
-    /// 双眼放光 + 美滋滋微笑 + 身体微摇
-    /// </summary>
-    private void UpdateMoney()
-    {
-        float p = _complexActionPhase;
-        float duration = MONEY_DURATION;
-
-        float t = Mathf.Clamp01(p / duration);
-        float eased = Mathf.Sin(t * Mathf.PI);
-
-        // 数钱表情（Param122 = 钱）
-        SetParameter("Param122", eased);
-
-        // 微笑（美滋滋）
-        SetParameter("ParamEyeLSmile", eased * MONEY_SMILE);
-        SetParameter("ParamEyeRSmile", eased * MONEY_SMILE);
-
-        // 歪头卖萌
-        SetParameter("ParamAngleZ", Mathf.Sin(p * 1.5f) * eased * MONEY_TILT);
-
-        // 身体美滋滋地摇晃
-        float sway = Mathf.Sin(p * 2f) * eased * MONEY_SWAY;
-        SetParameter("ParamBodyAngleZ", sway);
-        SetParameter("ParamBodyAngleX", sway * 0.3f);
-
-        // 眼睛微微眯起（满足感）
-        SetParameter("ParamEyeLOpen", 1f - eased * 0.15f);
-        SetParameter("ParamEyeROpen", 1f - eased * 0.15f);
-
-        if (t >= 1f) ResetIdleAction();
-    }
-
-    /// <summary>
     /// 动作8: 委屈 😢
     /// 泪眼汪汪 + 低头 + 八字眉 + 嘴巴微颤
     /// </summary>
@@ -1708,8 +1829,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     }
 
     /// <summary>
-    /// 动作9: 法阵显现 ✨
-    /// 五阶段：举过头顶→剑指成型→指尖凝光→白光扩散→消散
+    /// 法阵显现 ✨
+    /// 五阶段：举过头顶→剑指成型→指尖凝光→扩散至全屏→消散
+    /// 视觉特效包括：黑幕淡入、镜头推近、紫环旋转、白圈扩散、星星闪烁、眼镜发光
     /// </summary>
     // ★ Ease 辅助函数
     private float EaseOutQuad(float x) { return 1f - (1f - x) * (1f - x); }
@@ -1722,9 +1844,42 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         float duration = CIRCLE_DURATION;
         float t = Mathf.Clamp01(p / duration);
 
-        // ===== 身体姿态（全阶段） =====
-        SetParameter("ParamBodyAngleX", -8f);
-        SetParameter("ParamAngleX", -10f);
+        // ===== 身体姿态（全阶段 + 物理飘动） =====
+        // 弹簧初始化
+        if (p == 0f)
+        {
+            _magicSpringPosX = 0f; _magicSpringVelX = 0f;
+            _magicSpringPosH = 0f; _magicSpringVelH = 0f;
+            _magicFloatPhase = 0f;
+            _magicModeTimer = 0f;
+            _magicModeDuration = Random.Range(2f, 5f);
+            _magicModeBouncy = Random.value > 0.5f;
+            _magicDamping = _magicModeBouncy ? CIRCLE_SPRING_DAMP_BOUNCE : CIRCLE_SPRING_DAMP_SOFT;
+        }
+
+        // 更新 Perlin 噪声目标 + Spring-Damper 物理
+        float mdt = Time.deltaTime;
+        _magicFloatPhase += mdt * CIRCLE_FLOAT_SPEED;
+        _magicModeTimer += mdt;
+        if (_magicModeTimer >= _magicModeDuration)
+        {
+            _magicModeTimer = 0f;
+            _magicModeDuration = Random.Range(2f, 5f);
+            _magicModeBouncy = Random.value > 0.5f;
+            _magicDamping = _magicModeBouncy ? CIRCLE_SPRING_DAMP_BOUNCE : CIRCLE_SPRING_DAMP_SOFT;
+        }
+
+        float targetX = (Mathf.PerlinNoise(_magicFloatPhase, 0f) - 0.5f) * CIRCLE_FLOAT_AMPLITUDE_BODY;
+        float targetH = (Mathf.PerlinNoise(_magicFloatPhase, 1f) - 0.5f) * CIRCLE_FLOAT_AMPLITUDE_HEAD;
+        float forceX = CIRCLE_SPRING_STIFF * (targetX - _magicSpringPosX) - _magicDamping * _magicSpringVelX;
+        _magicSpringVelX += forceX * mdt;
+        _magicSpringPosX += _magicSpringVelX * mdt;
+        float forceH = CIRCLE_SPRING_STIFF * (targetH - _magicSpringPosH) - _magicDamping * _magicSpringVelH;
+        _magicSpringVelH += forceH * mdt;
+        _magicSpringPosH += _magicSpringVelH * mdt;
+
+        SetParameter("ParamBodyAngleX", -8f + _magicSpringPosX);
+        SetParameter("ParamAngleX", -10f + _magicSpringPosH);
         SetParameter("ParamBodyAngleZ", 0);
 
         // ===== 手部图层优先级（Phase1-4 保持最前，不被衣服挡住） =====
@@ -1733,47 +1888,279 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         // ★ Param92 全程保持剑指模式（不随h渐消，防10指重叠）
         SetParameter("Param92", 1f);
 
-        // ===== 仅保留身体姿态和手势，已移除所有视觉特效参数 =====
-        if (t < 0.20f)
+        // ===== 视觉特效 =====
+        // Phase 边界
+        const float P1 = 0.20f;  // 举过头顶
+        const float P2 = 0.45f;  // 剑指成型
+        const float P3 = 0.50f;  // 指尖凝光
+        const float P4 = 0.75f;  // 扩散至全屏
+        // P5 = 1.00f 消散
+
+        // 星星
+        float starVis = 0f, starSize = 0f, outerScale = 0f, outerAppear = 0f;
+
+        // 紫环
+        float ringOuterVis = 0f, ringMidVis = 0f, ringInnerVis = 0f;
+        float ringOuterRot = 0f, ringMidRot = 0f, ringInnerRot = 0f;
+        float ringOuterSize = 0f, ringMidSize = 0f, ringInnerSize = 0f;
+
+        // 黑幕/白圈
+        float darkScreen = 0f, darkAppear = 0f;
+        float whiteCircle = 0f, whiteCircleSize = 0f;
+        float whiteX = 0f, whiteY = 0f;
+
+        // 镜头
+        float camX = 0f, camY = 0f, charScale = 1f;
+
+        // 眼镜发光
+        float eyeGlow = 0f;
+        float eyeOpen = 1f; // 睁眼幅度（>1=睁大，瞳孔露出更多→更亮）
+
+        // ---- Phase1: 举过头顶 ----
+        if (t < P1)
         {
-            float h = EaseInCubic(t / 0.20f);
+            float h = EaseInCubic(t / P1);
+
+            // 手势
             SetHandPose(h);
             SetSwordFinger(h);
-            return;
-        }
 
-        if (t < 0.45f)
+            // 星星淡入
+            starVis = h;
+            starSize = h * 0.3f;
+
+            // 黑幕淡入（仅本体周围）
+            darkScreen = h * 0.08f;
+            darkAppear = h * 0.05f;
+
+            // 镜头微推
+            charScale = 1f + h * 0.08f;
+            camX = h * 2f;
+            camY = h * 1f;
+        }
+        // ---- Phase2: 剑指成型 ----
+        else if (t < P2)
         {
+            float h = (t - P1) / (P2 - P1); // 0→1
+            float eased = EaseOutQuad(h);
+
             SetHandPose(1f);
             SetSwordFinger(1f);
-            return;
-        }
 
-        if (t < 0.50f)
+            // 星星全亮
+            starVis = 1f;
+            starSize = 0.3f + eased * 0.5f;
+            outerScale = eased * 0.6f;
+            outerAppear = eased * 0.5f;
+
+            // 紫环显现
+            ringOuterVis = eased;
+            ringMidVis = eased * 0.7f;
+            ringInnerVis = eased * 0.4f;
+            ringOuterRot = eased * 30f;
+            ringMidRot = eased * 45f;
+            ringInnerRot = eased * 60f;
+            ringOuterSize = 1f + eased * 0.5f;
+            ringMidSize = 1f + eased * 0.3f;
+            ringInnerSize = 1f + eased * 0.2f;
+
+            // 黑幕继续加深（仅本体周围）
+            darkScreen = 0.08f + eased * 0.12f;
+            darkAppear = 0.05f + eased * 0.08f;
+
+            // 镜头推近
+            charScale = 1.08f + eased * 0.12f;
+            camX = 2f + eased * 3f;
+            camY = 1f + eased * 2f;
+
+            // 眼镜微亮（高光极低值，避免变白）
+            eyeGlow = eased * 0.06f;
+            eyeOpen = 1f + eased * 0.15f;
+        }
+        // ---- Phase3: 指尖凝光 ----
+        else if (t < P3)
         {
+            float h = (t - P2) / (P3 - P2);
+
             SetHandPose(1f);
             SetSwordFinger(1f);
-            return;
-        }
 
-        if (t < 0.75f)
+            // 星星峰值
+            starVis = 1f;
+            starSize = 0.8f + h * 0.3f;
+            outerScale = 0.6f + h * 0.4f;
+            outerAppear = 0.5f + h * 0.5f;
+
+            // 紫环急速旋转
+            float spin = 1f + h * 3f;
+            ringOuterVis = 1f;
+            ringMidVis = 0.7f + h * 0.3f;
+            ringInnerVis = 0.4f + h * 0.2f;
+            ringOuterRot = 30f + spin * 60f;
+            ringMidRot = 45f + spin * 90f;
+            ringInnerRot = 60f + spin * 120f;
+            ringOuterSize = 1.5f + h * 0.3f;
+            ringMidSize = 1.3f + h * 0.3f;
+            ringInnerSize = 1.2f + h * 0.2f;
+
+            // 黑幕最深（仅本体周围）
+            darkScreen = 0.20f + h * 0.05f;
+            darkAppear = 0.13f + h * 0.05f;
+
+            // 镜头最推近
+            charScale = 1.2f + h * 0.15f;
+            camX = 5f + h * 3f;
+            camY = 3f + h * 2f;
+
+            // 眼镜微亮峰值
+            eyeGlow = 0.06f + h * 0.06f;
+            eyeOpen = 1.15f + h * 0.15f;
+
+            // 白圈开始出现（仅本体）
+            whiteCircle = h * 0.08f;
+            whiteCircleSize = h * 0.05f;
+        }
+        // ---- Phase4: 扩散至全屏 ----
+        else if (t < P4)
         {
-            float h = 1f - EaseOutQuad((t - 0.48f) / 0.27f);
-            SetHandPose(h);
-            SetSwordFinger(h);
-            return;
-        }
+            float h = (t - P3) / (P4 - P3);
+            float eased = EaseOutQuad(h);
 
-        // ===== Phase5: 消散 =====
+            float handFade = 1f - EaseOutQuad(h);
+            SetHandPose(handFade);
+            SetSwordFinger(handFade);
+
+            // 星星渐退→七星盘
+            starVis = 1f - eased * 0.5f;
+            starSize = 1.1f * (1f - eased * 0.3f);
+            outerScale = 1f * (1f - eased);
+            outerAppear = 1f * (1f - eased);
+
+            // 紫环渐收
+            ringOuterVis = 1f * (1f - eased);
+            ringMidVis = 1f * (1f - eased * 0.5f);
+            ringInnerVis = 0.6f * (1f - eased * 0.3f);
+            ringOuterRot = 90f + eased * 60f;
+            ringMidRot = 135f + eased * 90f;
+            ringInnerRot = 180f + eased * 120f;
+            ringOuterSize = 1.8f + eased * 2f;  // 扩散
+            ringMidSize = 1.6f + eased * 1.5f;
+            ringInnerSize = 1.4f + eased * 1f;
+
+            // 黑幕维持（仅本体周围）
+            darkScreen = 0.25f;
+            darkAppear = 0.18f - eased * 0.05f;
+
+            // 镜头回正
+            charScale = 1.35f * (1f - eased * 0.35f);
+            camX = 8f * (1f - eased);
+            camY = 5f * (1f - eased);
+
+            // 眼镜微亮渐消
+            eyeGlow = 0.12f * (1f - eased);
+            eyeOpen = 1.3f * (1f - eased * 0.3f);
+
+            // 白圈扩散（仅本体周围）
+            whiteCircle = 0.08f + eased * 0.12f;
+            whiteCircleSize = 0.05f + eased * 0.20f;
+            whiteX = eased * 0.4f;
+            whiteY = eased * 0.3f;
+        }
+        // ---- Phase5: 消散 ----
+        else
         {
             float phase5 = (t - 0.75f) / 0.25f;
             float fade = 1f - EaseOutQuad(phase5);
-            SetParameter("ParamBodyAngleX", fade * -8f);
-            SetParameter("ParamAngleX", fade * -10f);
+
+            // 身体淡出（飘动也随 fade 消退）
+            SetParameter("ParamBodyAngleX", fade * (-8f + _magicSpringPosX));
+            SetParameter("ParamAngleX", fade * (-10f + _magicSpringPosH));
             SetHandLayer(fade);
             SetParameter("Param92", fade);
+            SetHandPose(fade);
+            SetSwordFinger(fade);
+
+            // 星星归零
+            starVis = fade * 0.5f;
+            starSize = fade * 0.5f;
+            outerScale = 0f;
+            outerAppear = 0f;
+
+            // 紫环消散
+            ringOuterVis = fade;
+            ringMidVis = fade;
+            ringInnerVis = fade;
+            ringOuterSize = 3.8f + (1f - fade) * 2f; // 放大消散
+            ringMidSize = 3.1f + (1f - fade) * 1.5f;
+            ringInnerSize = 2.4f + (1f - fade) * 1f;
+
+            // 黑幕渐消
+            darkScreen = fade * 0.25f;
+            darkAppear = fade * 0.18f;
+
+            // 白圈渐消
+            whiteCircle = fade * 0.12f;
+            whiteCircleSize = 0.25f + (1f - fade) * 0.5f; // 放大消散
+
+            // 镜头归位
+            charScale = 1f + (fade - 1f) * 0.35f;
+            camX = fade * 2f;
+            camY = fade * 1f;
+
+            // 眼镜微亮归零
+            eyeGlow = fade * 0.06f;
+            eyeOpen = 1f + (fade - 1f) * 0.3f;
+
             if (t >= 1f) ResetIdleAction();
         }
+
+        // ===== 应用视觉特效参数 =====
+        // 星星
+        SetParameter("Param451", starVis); // star_visibility
+        SetParameter("Param541", starSize); // star_size
+        SetParameter("Param1071", outerScale); // star_outer_scale
+        SetParameter("Param1081", outerAppear); // star_outer_appear
+
+        // 紫环
+        SetParameter("Param421", ringOuterRot); // 外紫环 转
+        SetParameter("Param431", ringOuterVis); // 外紫环显隐
+        SetParameter("Param441", ringOuterSize); // 外紫环大小
+        SetParameter("Param901", ringMidRot); // 中紫环 转
+        SetParameter("Param911", ringMidVis); // 中紫环显隐
+        SetParameter("Param961", ringMidSize); // 中紫环大小
+        SetParameter("Param881", ringInnerRot); // 内紫环 转
+        SetParameter("Param741", ringInnerVis); // 内紫环显隐
+        SetParameter("Param731", ringInnerSize); // 内紫环大小
+
+        // 黑幕
+        SetParameter("Param121", darkScreen); // 黑幕切换
+        SetParameter("Param137", darkAppear); // 黑幕 透明显现
+
+        // 白圈
+        SetParameter("Param136", whiteCircle); // 白圈不透明度
+        SetParameter("Param133", whiteCircleSize); // 白圈 大小
+        SetParameter("Param134", whiteX); // 白圈 位移x
+        SetParameter("Param135", whiteY); // 白圈 位移Y
+
+        // 镜头
+        SetParameter("Param155", camX); // 镜头 X
+        SetParameter("Param156", camY); // 镜头Y
+        SetParameter("Param157", charScale); // 人物缩小放大
+
+        // 眼睛——仅睁大瞳孔（自然亮）
+        // Param132 是白色覆盖层（使眼变白），Param63-71（高光/光点）也是白色泛白，全不用
+        SetParameter("Param132", 0f);
+        SetParameter("Param63", 0f);
+        SetParameter("Param64", 0f);
+        SetParameter("Param65", 0f);
+        SetParameter("Param67", 0f);
+        SetParameter("Param68", 0f);
+        SetParameter("Param69", 0f);
+        SetParameter("Param70", 0f);
+        SetParameter("Param71", 0f);
+        // ★ 仅用睁大瞳孔 → 自然更亮（露出更多瞳孔颜色）
+        SetParameter("ParamEyeLOpen", eyeOpen);
+        SetParameter("ParamEyeROpen", eyeOpen);
     }
 
     /// <summary>设置剑指手指参数（h=0~1 控制强度，用于淡入淡出，不设Param92防10指重叠）</summary>
@@ -1877,13 +2264,17 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     /// <summary>重置空闲动作，清理参数</summary>
     private void ResetIdleAction()
     {
+        // ★ 保存当前动作ID（在清零前），用于特殊冷却判断
+        int prevAction = _currentIdleAction;
+
         bool wasLocked = _actionLocked;
         _actionLocked = false;
 
         _currentIdleAction = 0;
         _idleActionTime = 0f;
         _complexActionPhase = 0f;
-        _idleActionCooldown = 1.5f; // 冷却1.5秒防立即重播
+        // ★ 法阵（动作9）播完后长冷却，防立即重播
+        _idleActionCooldown = (prevAction == 9) ? 60f : 1.5f;
 
         // ★ 新系统：停止表情淡出（避免残留）
         StopExpression(0.15f);
@@ -1897,7 +2288,6 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("ParamBrowLY", 0f);
         SetParameter("ParamEyeLOpen", 1f);
         SetParameter("ParamEyeROpen", 1f);
-        SetParameter("Param109", 0f); // 爱心眼
         SetParameter("Param94", 0f);  // 右手上臂旋转
         SetParameter("Param97", 0f);  // 右手 基础上臂旋转
         SetParameter("Param95", 0f);  // 右手 基础 上壁透视
@@ -1917,7 +2307,6 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("Param37", 0f);  // 左手手臂L3
         SetParameter("Param401", 0f); // 外蒙版
         SetParameter("Param104", 0f); // 生气
-        SetParameter("Param122", 0f); // 钱（数钱）
         SetParameter("Param130", 0f); // 泪眼（委屈）
         SetParameter("Param101", 0f); // 黑脸（害羞）
         SetParameter("Param92", 0f);  // 右手切换→手指模式 OFF
@@ -1935,7 +2324,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("Param105", 0f);
         SetParameter("Param106", 0f);
         SetParameter("Param107", 0f);
-        // 法阵参数（已移除黑幕/白圈/发光等视觉特效参数）
+        // 法阵视觉特效参数清零
         SetParameter("Param155", 0f); // 镜头X
         SetParameter("Param156", 0f); // 镜头Y
         SetParameter("Param157", 0f); // 人物缩小放大
@@ -1945,6 +2334,33 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("Param1071", 0f); // star_outer_scale
         SetParameter("Param1081", 0f); // star_outer_appear
         SetParameter("Param154", 0f); // star_plate_transparency
+        // 紫环特效参数
+        SetParameter("Param421", 0f); // 外紫环旋转
+        SetParameter("Param431", 0f); // 外紫环显隐
+        SetParameter("Param441", 0f); // 外紫环大小
+        SetParameter("Param901", 0f); // 中紫环旋转
+        SetParameter("Param911", 0f); // 中紫环显隐
+        SetParameter("Param961", 0f); // 中紫环大小
+        SetParameter("Param881", 0f); // 内紫环旋转
+        SetParameter("Param741", 0f); // 内紫环显隐
+        SetParameter("Param731", 0f); // 内紫环大小
+        // 黑幕/白圈/发光
+        SetParameter("Param121", 0f); // 黑幕切换
+        SetParameter("Param137", 0f); // 黑幕透明度
+        SetParameter("Param136", 0f); // 白圈不透明度
+        SetParameter("Param133", 0f); // 白圈大小
+        SetParameter("Param134", 0f); // 白圈位移x
+        SetParameter("Param135", 0f); // 白圈位移y
+        SetParameter("Param132", 0f); // 眼镜发光（白色覆盖层）
+        // 眼睛高光/光点参数归零
+        SetParameter("Param63", 0f); // 高光R1
+        SetParameter("Param64", 0f); // 高光R2
+        SetParameter("Param67", 0f); // 高光L1
+        SetParameter("Param68", 0f); // 高光L2
+        SetParameter("Param65", 0f); // 光点R1
+        SetParameter("Param69", 0f); // 光点R2
+        SetParameter("Param70", 0f); // 光点L1
+        SetParameter("Param71", 0f); // 光点L2
 
         if (wasLocked)
         {
@@ -2060,7 +2476,6 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         if (isNight)
         {
             w[3] = Mathf.Max(1, w[3] - 1);  // 动作4 星辉
-            w[5] = Mathf.Max(1, w[5] - 1);  // 动作6 爱心眼
             w[7] = w[7] + 1;                // 动作8 委屈/困
         }
         if (isSleepy)
@@ -2077,14 +2492,11 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
                 wt == TimeWeatherController.WeatherType.Drizzle ||
                 wt == TimeWeatherController.WeatherType.Thunder)
             {
-                w[7] = w[7] + 2;            // 动作8 委屈（下雨天不开心）
-                w[5] = Mathf.Max(1, w[5] - 1); // 动作6 爱心眼减少
-                w[6] = Mathf.Max(1, w[6] - 1); // 动作7 数钱减少
+                w[7] = w[7] + 1;            // 动作8 委屈（下雨天不开心）
             }
             else if (wt == TimeWeatherController.WeatherType.Clear ||
                      wt == TimeWeatherController.WeatherType.Cloudy)
             {
-                w[5] = w[5] + 1;            // 动作6 爱心眼（晴天开心）
                 w[3] = w[3] + 1;            // 动作4 星辉
             }
             else if (wt == TimeWeatherController.WeatherType.Snow)
@@ -2385,6 +2797,40 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     public void StopExpression(float fadeTime = -1f)
     {
         ActionController?.StopExpression(fadeTime);
+
+        // ★ 修复：表情停止后眼睛保持暗色的问题
+        //   根因：表情/动作修改了 ArtMesh MultiplyColor → GPU 被写入暗色。
+        //       停止后 ExpressionManager 淡出参数，但 Cubism 的 IsBlendColorDirty
+        //       不重新变 true → GPU MaterialPropertyBlock 缓存保持暗色。
+        //   ❌ 之前调 ApplyMultiplyColor() 但它在淡出还没完成时读取的仍是暗色值。
+        //   ✅ 延迟等淡出完成 → 用本地 MaterialPropertyBlock 直接盖 GPU 为白色。
+        CancelInvoke(nameof(ForceRefreshModelAfterFade));
+        float delay = fadeTime >= 0f ? fadeTime + 0.1f : 0.4f;
+        Invoke(nameof(ForceRefreshModelAfterFade), delay);
+    }
+
+    /// <summary>
+    /// 延迟刷新 GPU MaterialPropertyBlock 为白色（等表情淡出完成后调用）。
+    /// 用本地 MPB 实例，不依赖 Cubism 的 ApplyMultiplyColor（因它读原生数据）。
+    /// </summary>
+    private void ForceRefreshModelAfterFade()
+    {
+        if (_cubismModel == null) return;
+
+        var renderController = _cubismModel.GetComponent<CubismRenderController>();
+        if (renderController?.Renderers == null) return;
+
+        // 用本地 MaterialPropertyBlock 实例，避免干扰 Cubism 的静态 SharedPropertyBlock
+        var mpb = new MaterialPropertyBlock();
+        foreach (var renderer in renderController.Renderers)
+        {
+            renderer.MeshRenderer.GetPropertyBlock(mpb);
+            mpb.SetColor("cubism_MultiplyColor", Color.white);
+            mpb.SetColor("cubism_ScreenColor", Color.clear);
+            renderer.MeshRenderer.SetPropertyBlock(mpb);
+        }
+
+        Debug.Log("[Live2DRenderer] ✓ 表情停止后强制 GPU 恢复白色混合颜色");
     }
 
     /// <summary>播放复合动作</summary>
@@ -2418,7 +2864,13 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             if (!_actionLocked) return;
             CancelInvoke(nameof(ReleaseActionLock));
             _actionLocked = false;
-            // ★ 动作完毕恢复宠物物理
+            // ★ 动作完毕重置所有动作参数（含 Param132 等眼睛白色覆盖层），
+            //   防止 ActionPreset 残留的值导致眼睛发白
+            ResetIdleAction();
+            // ★ 强制刷新 GPU 混合颜色，解决动作结束后 ArtMesh 保持暗色的问题
+            if (_cubismModel != null) _cubismModel.ForceUpdateNow();
+            ForceRefreshModelAfterFade();
+            // ★ 恢复宠物物理
             if (_pet != null) _pet.Resume();
             OnForcedActionFinished?.Invoke();
             onComplete?.Invoke();
@@ -2433,8 +2885,6 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         {
             "star_spin" => 8f,    // 5.5s + 余量
             "stretch"   => 6f,    // 4.5s + 余量
-            "heart_eyes" => 5f,
-            "money"     => 5f,
             "cry"       => 5f,
             "blush"     => 5f,
             "confuse"   => 5f,
@@ -2449,6 +2899,10 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         if (!_actionLocked) return;
         Debug.LogWarning($"[Live2DRenderer] ⏰ 动作超时强制释放锁 (ActionLocked={_actionLocked})");
         _actionLocked = false;
+        // ★ 超时强制清理动作参数（含 Param132 眼睛白色覆盖层）
+        ResetIdleAction();
+        if (_cubismModel != null) _cubismModel.ForceUpdateNow();
+        ForceRefreshModelAfterFade();
         if (_pet != null && _pet.isPaused)
             _pet.Resume();
         // 通知调用方（ContextMenu 恢复宠物状态）
@@ -2469,6 +2923,168 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         return string.Join(", ", ActionController.Actions.AvailableActions);
     }
 
+    // ================================================================
+    // ===== 射线触摸检测系统 =====
+    // ================================================================
+
+    // Drawable 名称关键词 → 身体部位映射表
+    private static readonly (string keyword, BodyPart part)[] DrawableBodyPartKeywords = new (string, BodyPart)[]
+    {
+        ("頭",      BodyPart.Head),
+        ("顔",      BodyPart.Head),
+        ("脸",      BodyPart.Head),
+        ("头",      BodyPart.Head),
+        ("颈",      BodyPart.Head),
+        ("neck",    BodyPart.Head),
+        ("head",    BodyPart.Head),
+        ("face",    BodyPart.Head),
+        ("体",      BodyPart.Body),
+        ("Body",    BodyPart.Body),
+        ("body",    BodyPart.Body),
+        ("胸",      BodyPart.Body),
+        ("胸",      BodyPart.Body),
+        ("腰",      BodyPart.Body),
+        ("脚",      BodyPart.Leg),
+        ("足",      BodyPart.Leg),
+        ("腿",      BodyPart.Leg),
+        ("leg",     BodyPart.Leg),
+        ("foot",    BodyPart.Leg),
+        ("腕",      BodyPart.Arm),
+        ("手",      BodyPart.Arm),
+        ("arm",     BodyPart.Arm),
+        ("finger",  BodyPart.Arm),
+        ("袖",      BodyPart.Arm),
+        ("裙",      BodyPart.Dress),
+        ("skirt",   BodyPart.Dress),
+        ("饰",      BodyPart.Dress),
+        ("衣",      BodyPart.Dress),
+        ("dress",   BodyPart.Dress),
+        ("发",      BodyPart.Other),
+        ("hair",    BodyPart.Other),
+        ("髪",      BodyPart.Other),
+    };
+
+    // Drawable 名称缓存 → 身体部位
+    private Dictionary<string, BodyPart> _drawableBodyParts = new Dictionary<string, BodyPart>();
+    // 是否已缓存分类
+    private bool _drawableClassificationCached = false;
+    // 各部位 Drawable 列表
+    private Dictionary<BodyPart, List<string>> _bodyPartDrawables = new Dictionary<BodyPart, List<string>>();
+    // 模型整体 Y 边界（屏幕空间）
+    private float _modelBoundsTop = 0f;
+    private float _modelBoundsBottom = 1f;
+
+    /// <summary>计算 Drawable 名称到身体部位的映射，缓存 Y 范围</summary>
+    private void CacheDrawableClassificationBounds()
+    {
+        if (_cubismModel == null) return;
+
+        _drawableBodyParts.Clear();
+        _bodyPartDrawables.Clear();
+        foreach (BodyPart part in System.Enum.GetValues(typeof(BodyPart)))
+            _bodyPartDrawables[part] = new List<string>();
+
+        float minY = float.MaxValue;
+        float maxY = float.MinValue;
+
+        foreach (var drawable in _cubismModel.Drawables)
+        {
+            string name = drawable.name ?? drawable.Id;
+            BodyPart part = ClassifyDrawableByName(name);
+            _drawableBodyParts[name] = part;
+            _bodyPartDrawables[part].Add(name);
+
+            // 计算模型世界坐标 Y 范围
+            var renderer = drawable.GetComponent<CubismRenderer>();
+            if (renderer != null)
+            {
+                var bounds = renderer.Mesh.bounds;
+                Vector3 worldMin = renderer.transform.TransformPoint(bounds.min);
+                Vector3 worldMax = renderer.transform.TransformPoint(bounds.max);
+                if (worldMin.y < minY) minY = worldMin.y;
+                if (worldMax.y > maxY) maxY = worldMax.y;
+            }
+        }
+
+        // 存为屏幕空间参考（后续用世界->屏幕转换）
+        _modelBoundsTop = maxY;
+        _modelBoundsBottom = minY;
+
+        _drawableClassificationCached = true;
+        Debug.Log($"[Live2DRenderer] Drawable 分类完成: 头={_bodyPartDrawables[BodyPart.Head].Count}, " +
+                  $"身体={_bodyPartDrawables[BodyPart.Body].Count}, 手臂={_bodyPartDrawables[BodyPart.Arm].Count}, " +
+                  $"腿={_bodyPartDrawables[BodyPart.Leg].Count}, 裙子={_bodyPartDrawables[BodyPart.Dress].Count}, " +
+                  $"其他={_bodyPartDrawables[BodyPart.Other].Count}");
+    }
+
+    /// <summary>根据 Drawable 名称分类身体部位</summary>
+    private BodyPart ClassifyDrawableByName(string name)
+    {
+        string lower = name.ToLowerInvariant();
+        foreach (var (keyword, part) in DrawableBodyPartKeywords)
+        {
+            if (lower.Contains(keyword.ToLowerInvariant()))
+                return part;
+        }
+        return BodyPart.Other;
+    }
+
+    /// <summary>
+    /// 发射射线检测点击的模型 Drawable，返回最优先命中部位
+    /// </summary>
+    private BodyPart RaycastToBodyPart(Vector2 screenPos)
+    {
+        if (_cubismRaycaster == null || _cubismModel == null)
+            return BodyPart.Other;
+
+        Camera cam = Camera.main;
+        if (cam == null) return BodyPart.Other;
+
+        // 屏幕坐标 → 射线
+        Ray ray = cam.ScreenPointToRay(screenPos);
+        int hitCount = _cubismRaycaster.Raycast(ray, _raycastResults, 100f);
+
+        if (hitCount == 0)
+            return BodyPart.Other;
+
+        // 命中优先级：头 > 身体 > 手臂 > 腿 > 裙子 > 其他
+        BodyPart[] priority = new BodyPart[]
+        {
+            BodyPart.Head, BodyPart.Body, BodyPart.Arm,
+            BodyPart.Leg, BodyPart.Dress, BodyPart.Other
+        };
+
+        // 收集所有命中的部位（按距离排序自动由 raycaster 保证）
+        for (int i = 0; i < hitCount && i < _raycastResults.Length; i++)
+        {
+            string drawableName = _raycastResults[i].Drawable?.name ?? _raycastResults[i].Drawable?.Id;
+            if (string.IsNullOrEmpty(drawableName)) continue;
+
+            BodyPart part;
+            if (_drawableBodyParts.TryGetValue(drawableName, out part))
+            {
+                // 按优先级返回第一个匹配的
+                for (int p = 0; p < priority.Length; p++)
+                {
+                    if (part == priority[p])
+                        return part;
+                }
+            }
+        }
+
+        return BodyPart.Other;
+    }
+
+    /// <summary>包围盒层级退化的身体部位估算（当射线检测失败时用 hitNormY 回退）</summary>
+    private BodyPart EstimateBodyPartByHeight(float hitNormY)
+    {
+        if (hitNormY <= 0.30f) return BodyPart.Head;     // 头顶区
+        if (hitNormY <= 0.55f) return BodyPart.Body;     // 身体区
+        if (hitNormY <= 0.70f) return BodyPart.Arm;      // 手臂区（身体两侧）
+        if (hitNormY <= 0.85f) return BodyPart.Dress;     // 裙子区
+        return BodyPart.Leg;                               // 腿脚区
+    }
+
     #region IPetRenderer
 
     public void ShowDragPose()
@@ -2484,42 +3100,93 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         _dragInited = true;
     }
 
-    public void ShowClickPose(float hitNormY)
+    public void ShowClickPose(Vector2 screenPos)
     {
         _clickSavedParams.Clear();
 
-        if (hitNormY <= 0.35f)
+        // ★ 先用 CubismRaycaster 精确检测命中的身体部位
+        BodyPart hitPart = RaycastToBodyPart(screenPos);
+
+        // ★ 射线检测失败的回退方案：用垂直位置估算
+        if (hitPart == BodyPart.Other)
         {
-            // === 头部 → 摸头：眯眼歪头 ===
-            _clickSavedParams["ParamEyeLOpen"] = CLICK_EYE_OPEN;
-            _clickSavedParams["ParamEyeROpen"] = CLICK_EYE_OPEN;
-            _clickSavedParams["ParamAngleX"] = CLICK_HEAD_ANGLE_X;
-            _clickSavedParams["ParamBodyAngleX"] = CLICK_BODY_ANGLE_X;
-        }
-        else if (hitNormY <= 0.65f)
-        {
-            // === 身体 → 戳一下：睁大眼张嘴惊讶 ===
-            _clickSavedParams["ParamEyeLOpen"] = POKE_EYE_OPEN;
-            _clickSavedParams["ParamEyeROpen"] = POKE_EYE_OPEN;
-            _clickSavedParams["ParamMouthOpenY"] = POKE_MOUTH_OPEN;
-            _clickSavedParams["ParamMouthForm"] = POKE_MOUTH_FORM;
-            _clickSavedParams["ParamBrowLY"] = POKE_BROW_RAISE;
-            _clickSavedParams["ParamBrowRY"] = POKE_BROW_RAISE;
-            _clickSavedParams["ParamAngleX"] = CLICK_HEAD_ANGLE_X * 0.5f;
-        }
-        else
-        {
-            // === 腿/脚 → 碰腿：害羞开心 ===
-            _clickSavedParams["ParamEyeLOpen"] = LEG_HIT_EYE_CLOSE;
-            _clickSavedParams["ParamEyeROpen"] = LEG_HIT_EYE_CLOSE;
-            _clickSavedParams["ParamEyeLSmile"] = LEG_HIT_SMILE;
-            _clickSavedParams["ParamEyeRSmile"] = LEG_HIT_SMILE;
-            _clickSavedParams["ParamAngleZ"] = LEG_HIT_ANGLE_Z;
-            _clickSavedParams["ParamAngleX"] = CLICK_HEAD_ANGLE_X * 0.3f;
-            _clickSavedParams["ParamBodyAngleX"] = CLICK_BODY_ANGLE_X * 0.5f;
+            Camera cam = Camera.main;
+            if (cam != null && _pet != null)
+            {
+                float hitNormY = Mathf.Clamp01((screenPos.y - _pet.petY) / _pet.petHeight);
+                hitPart = EstimateBodyPartByHeight(hitNormY);
+            }
         }
 
-        // 立即应用一次
+        switch (hitPart)
+        {
+            case BodyPart.Head:
+                // === 摸头：眯眼歪头，开心 ===
+                _clickSavedParams["ParamEyeLOpen"] = CLICK_EYE_OPEN;
+                _clickSavedParams["ParamEyeROpen"] = CLICK_EYE_OPEN;
+                _clickSavedParams["ParamAngleX"] = CLICK_HEAD_ANGLE_X;
+                _clickSavedParams["ParamBodyAngleX"] = CLICK_BODY_ANGLE_X;
+                _clickSavedParams["ParamEyeLSmile"] = 0.3f;
+                _clickSavedParams["ParamEyeRSmile"] = 0.3f;
+                break;
+
+            case BodyPart.Body:
+                // === 戳身体：睁大眼张嘴惊讶 ===
+                _clickSavedParams["ParamEyeLOpen"] = POKE_EYE_OPEN;
+                _clickSavedParams["ParamEyeROpen"] = POKE_EYE_OPEN;
+                _clickSavedParams["ParamMouthOpenY"] = POKE_MOUTH_OPEN;
+                _clickSavedParams["ParamMouthForm"] = POKE_MOUTH_FORM;
+                _clickSavedParams["ParamBrowRY"] = POKE_BROW_RAISE;
+                _clickSavedParams["ParamBrowLY"] = POKE_BROW_RAISE;
+                _clickSavedParams["ParamAngleX"] = CLICK_HEAD_ANGLE_X * 0.5f;
+                break;
+
+            case BodyPart.Arm:
+                // === 碰手臂：微微害羞 + 收手 ===
+                _clickSavedParams["ParamAngleX"] = CLICK_HEAD_ANGLE_X * 0.3f;
+                _clickSavedParams["ParamAngleZ"] = LEG_HIT_ANGLE_Z * 0.5f;
+                _clickSavedParams["ParamEyeLSmile"] = LEG_HIT_SMILE * 0.6f;
+                _clickSavedParams["ParamEyeRSmile"] = LEG_HIT_SMILE * 0.6f;
+                _clickSavedParams["ParamEyeLOpen"] = 0.7f;
+                _clickSavedParams["ParamEyeROpen"] = 0.7f;
+                _clickSavedParams["Param94"] = -2f;
+                _clickSavedParams["Param97"] = -5f;
+                break;
+
+            case BodyPart.Leg:
+                // === 碰腿：害羞开心 ===
+                _clickSavedParams["ParamEyeLOpen"] = LEG_HIT_EYE_CLOSE;
+                _clickSavedParams["ParamEyeROpen"] = LEG_HIT_EYE_CLOSE;
+                _clickSavedParams["ParamEyeLSmile"] = LEG_HIT_SMILE;
+                _clickSavedParams["ParamEyeRSmile"] = LEG_HIT_SMILE;
+                _clickSavedParams["ParamAngleZ"] = LEG_HIT_ANGLE_Z;
+                _clickSavedParams["ParamAngleX"] = CLICK_HEAD_ANGLE_X * 0.3f;
+                _clickSavedParams["ParamBodyAngleX"] = CLICK_BODY_ANGLE_X * 0.5f;
+                _clickSavedParams["ParamBreath"] = 1.5f;
+                break;
+
+            case BodyPart.Dress:
+                // === 碰裙子：害羞 + 转头 ===
+                _clickSavedParams["ParamAngleZ"] = LEG_HIT_ANGLE_Z * 0.8f;
+                _clickSavedParams["ParamAngleX"] = CLICK_HEAD_ANGLE_X;
+                _clickSavedParams["ParamBodyAngleX"] = CLICK_BODY_ANGLE_X * 0.5f;
+                _clickSavedParams["ParamEyeLSmile"] = LEG_HIT_SMILE;
+                _clickSavedParams["ParamEyeRSmile"] = LEG_HIT_SMILE;
+                _clickSavedParams["ParamEyeLOpen"] = LEG_HIT_EYE_CLOSE;
+                _clickSavedParams["ParamEyeROpen"] = LEG_HIT_EYE_CLOSE;
+                _clickSavedParams["ParamBrowRY"] = 3f;
+                _clickSavedParams["ParamBrowLY"] = 3f;
+                break;
+
+            default:
+                // === 其他（头发/饰品）：简单回应 ===
+                _clickSavedParams["ParamAngleX"] = CLICK_HEAD_ANGLE_X * 0.5f;
+                _clickSavedParams["ParamBodyAngleX"] = CLICK_BODY_ANGLE_X * 0.3f;
+                break;
+        }
+
+        Debug.Log($"[Live2DRenderer] 点击部位: {hitPart}");
+
         foreach (var kv in _clickSavedParams)
             SetParameter(kv.Key, kv.Value);
 
@@ -3010,14 +3677,8 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 动作/smile")]
     private static void TestPlaySmile(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayAction("smile"); }
 
-    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 动作/money")]
-    private static void TestPlayMoney(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayAction("money"); }
-
     [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 动作/magic_circle")]
     private static void TestPlayMagicCircle(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayAction("magic_circle"); }
-
-    [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 动作/heart_eyes")]
-    private static void TestPlayHeartEyes(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayAction("heart_eyes"); }
 
     [UnityEditor.MenuItem("CONTEXT/Live2DRenderer/▶ 动作/cry")]
     private static void TestPlayCry(UnityEditor.MenuCommand cmd) { var r = (Live2DRenderer)cmd.context; r.PlayAction("cry"); }

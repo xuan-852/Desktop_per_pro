@@ -215,7 +215,7 @@ public class Model3DRenderer : MonoBehaviour, IPetRenderer
         SetSpeed(0f);
     }
 
-    public void ShowClickPose(float hitNormY)
+    public void ShowClickPose(Vector2 screenPos)
     {
         SetSpeed(0f);
     }
