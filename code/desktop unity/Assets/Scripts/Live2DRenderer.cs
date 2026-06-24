@@ -291,8 +291,8 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     private float _idleActionTime = 0f;
     private float _idleActionInterval = 8f;
     private int _currentIdleAction = 0; // 0=无, 1=歪头, 2=微笑, 3=挑眉, 4=星辉, 5=伸懒腰, 6=委屈, 7=法阵, 8=害羞, 9=困惑
-    // 各动作权重（对应动作 1-11），值越大出现概率越高（11号权重0=不自发触发，仅外部强制调用）
-    private readonly int[] _idleActionWeights = new int[] { 5, 5, 3, 2, 2, 3, 2, 3, 1, 3, 0 };
+    // 各动作权重（对应动作 1-9），值越大出现概率越高
+    private readonly int[] _idleActionWeights = new int[] { 5, 5, 3, 4, 3, 4, 2, 3, 0 };
     // 复合动作相位（用于多参数协同插值）
     private float _complexActionPhase = 0f;
     // 动作结束后的冷却时间（防动作无限重播）
@@ -1353,7 +1353,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             Debug.Log($"[Live2DRenderer] ▶ 动作 #{_currentIdleAction}");
         }
 
-        if (_currentIdleAction > 0 && (!_actionLocked || _actionLocked))
+        if (_currentIdleAction > 0)
         {
             _idleActionTime += Time.deltaTime;
             _complexActionPhase += Time.deltaTime;
@@ -1365,12 +1365,10 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
                 case 3: UpdateIdleBrow(); break;
                 case 4: UpdateStarSpin(); break;
                 case 5: UpdateStretch(); break;
-                case 6: break; // 已删除
-                case 7: break; // 已删除
-                case 8: UpdateCry(); break;
-                case 9: UpdateMagicCircle(); break;
-                case 10: UpdateBlush(); break;
-                case 11: UpdateConfuse(); break;
+                case 6: UpdateCry(); break;
+                case 7: UpdateMagicCircle(); break;
+                case 8: UpdateBlush(); break;
+                case 9: UpdateConfuse(); break;
             }
         }
     }
@@ -2273,8 +2271,8 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         _currentIdleAction = 0;
         _idleActionTime = 0f;
         _complexActionPhase = 0f;
-        // ★ 法阵（动作9）播完后长冷却，防立即重播
-        _idleActionCooldown = (prevAction == 9) ? 60f : 1.5f;
+        // ★ 法阵（动作7）播完后长冷却，防立即重播
+        _idleActionCooldown = (prevAction == 7) ? 60f : 1.5f;
 
         // ★ 新系统：停止表情淡出（避免残留）
         StopExpression(0.15f);
@@ -2476,11 +2474,11 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         if (isNight)
         {
             w[3] = Mathf.Max(1, w[3] - 1);  // 动作4 星辉
-            w[7] = w[7] + 1;                // 动作8 委屈/困
+            w[5] = w[5] + 1;                // 动作6 委屈/困
         }
         if (isSleepy)
         {
-            w[7] = w[7] + 2;                // 动作8 更想睡
+            w[5] = w[5] + 2;                // 动作6 更想睡
             w[0] = w[0] + 1;                // 动作1 歪头（没精神歪着）
         }
 
@@ -2492,7 +2490,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
                 wt == TimeWeatherController.WeatherType.Drizzle ||
                 wt == TimeWeatherController.WeatherType.Thunder)
             {
-                w[7] = w[7] + 1;            // 动作8 委屈（下雨天不开心）
+                w[5] = w[5] + 1;            // 动作6 委屈（下雨天不开心）
             }
             else if (wt == TimeWeatherController.WeatherType.Clear ||
                      wt == TimeWeatherController.WeatherType.Cloudy)
@@ -2502,7 +2500,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             else if (wt == TimeWeatherController.WeatherType.Snow)
             {
                 w[2] = w[2] + 1;            // 动作3 挑眉（好奇看雪）
-                w[7] = w[7] + 1;            // 动作8 委屈（冷）
+                w[5] = w[5] + 1;            // 动作6 委屈（冷）
             }
         }
 
