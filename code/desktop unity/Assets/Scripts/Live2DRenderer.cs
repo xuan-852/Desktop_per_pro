@@ -98,6 +98,25 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     const float CIRCLE_SPRING_STIFF        = 12f;    // 弹簧刚度（越大回正越快）
     const float CIRCLE_SPRING_DAMP_BOUNCE  = 3f;     // 弹性惯性模式阻尼（欠阻尼=有回弹）
     const float CIRCLE_SPRING_DAMP_SOFT    = 9f;     // 柔软跟随模式阻尼（临界阻尼=无过冲）
+
+    // ===================================================================
+    // ⭐9 法阵头发/衣服/姿态参数 — 改这里调幅度和速度
+    // ===================================================================
+    // ★ ParamBodyAngleX / ParamAngleX 是 Live2D 物理输入源：
+    //    物理系统根据 body angle 变化率驱动头发/衣服子刚体。
+    //    突变 → 头发飞起，渐入 → 头发自然飘动。
+    const float CIRCLE_BODY_ANGLE_X    = -8f;     // 身体后仰角度（负=后仰，给物理输入）
+    const float CIRCLE_HEAD_ANGLE_X    = -10f;    // 头部低垂角度（负=低头）
+    const float CIRCLE_ANGLE_RAMP_DUR  = 0.5f;    // 角度渐入时长(秒)，越大头发飞起越轻
+    // ★ camX 驱动头发/衣服（让法阵全程它们持续运动，不依赖物理）
+    const float CIRCLE_HAIR_SCALE      = 0.5f;    // camX → 头发 Param5/7/9/11… 倍数（0=关闭）
+    const float CIRCLE_HAIR_MAX        = 15f;     // 头发驱动最大值
+    const float CIRCLE_HAIR169_SCALE   = 0.3f;    // camX → 头饰 Param169 倍数
+    const float CIRCLE_HAIR169_MAX     = 10f;
+    const float CIRCLE_CLOTH_SCALE     = 0.4f;    // camX → 衣服 Param82/87/84/49/51/57/60 倍数（0=关闭）
+    const float CIRCLE_CLOTH_MAX       = 20f;     // 衣服驱动最大值
+    // ===================================================================
+
     // -- 走路（侧面视角）--
     // 模型转体侧面，腿/手臂摆动可见
     // bodyAngleY符号由方向决定（翻转后视觉一致）
@@ -362,6 +381,8 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     // 但输出权重归零后 Param34/36/37 不会收到物理驱动。
     private float[] _savedLeftArmWeights;
     private bool _leftArmPhysicsSaved = false;
+    private float _leftArmRestoreTimer = -1f;       // 缓恢复计时器 (-1=未激活)
+    private const float LEFT_ARM_RESTORE_DURATION = 0.4f; // 缓恢复时长（防回弹）
 
     // 拖拽平滑转身
     private float _dragSmoothBodyY = 0f;
@@ -933,6 +954,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         if (hasActiveAction || _actionLocked)
         {
             // === 0) 首次进入动作时保存左臂物理权重 ===
+            // ★ 如果在缓恢复过程中被新动作打断：重置恢复计时器
+            if (_leftArmRestoreTimer >= 0f) _leftArmRestoreTimer = -1f;
+
             if (!_leftArmPhysicsSaved)
             {
                 SaveLeftArmWeights();
@@ -955,10 +979,39 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         }
         else
         {
-            // === 恢复左臂物理权重（动作结束后） ===
+            // === 缓恢复左臂物理权重（动作结束后，防弹簧回弹） ===
+            // ★ 法阵等长时间动作中，左臂物理子刚体的弹簧内部已积累大量动量。
+            //   若瞬间恢复输出权重，弹簧动量一次性释放 → Param34/36/37 突跳 → 视觉回弹。
+            //   解决：在 LEFT_ARM_RESTORE_DURATION 秒内线性淡入输出权重。
             if (_leftArmPhysicsSaved)
             {
-                RestoreLeftArmWeights();
+                if (_leftArmRestoreTimer < 0f)
+                {
+                    // 首次进入恢复：启动缓恢复计时器
+                    _leftArmRestoreTimer = 0f;
+                }
+
+                _leftArmRestoreTimer += Time.deltaTime;
+                float t = Mathf.Clamp01(_leftArmRestoreTimer / LEFT_ARM_RESTORE_DURATION);
+                float weight = EaseOutQuad(t); // 缓出：先快后慢，进一步平滑过渡
+
+                // 应用插值后的权重
+                if (_savedLeftArmWeights != null && _leftArmSubRig != null && _leftArmSubRig.Output != null)
+                {
+                    int n = Mathf.Min(_savedLeftArmWeights.Length, _leftArmSubRig.Output.Length);
+                    for (int i = 0; i < n; i++)
+                    {
+                        _leftArmSubRig.Output[i].Weight = Mathf.Lerp(0f, _savedLeftArmWeights[i], weight);
+                    }
+                }
+
+                // 恢复完成 → 清理
+                if (t >= 1f)
+                {
+                    _savedLeftArmWeights = null;
+                    _leftArmPhysicsSaved = false;
+                    _leftArmRestoreTimer = -1f;
+                }
             }
         }
 
@@ -1876,8 +1929,10 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         _magicSpringVelH += forceH * mdt;
         _magicSpringPosH += _magicSpringVelH * mdt;
 
-        SetParameter("ParamBodyAngleX", -8f + _magicSpringPosX);
-        SetParameter("ParamAngleX", -10f + _magicSpringPosH);
+        // ★ 角度渐入，防止起始帧突变弹飞头发
+        float angleFade = Mathf.Clamp01(p / CIRCLE_ANGLE_RAMP_DUR);
+        SetParameter("ParamBodyAngleX", angleFade * (CIRCLE_BODY_ANGLE_X + _magicSpringPosX));
+        SetParameter("ParamAngleX", angleFade * (CIRCLE_HEAD_ANGLE_X + _magicSpringPosH));
         SetParameter("ParamBodyAngleZ", 0);
 
         // ===== 手部图层优先级（Phase1-4 保持最前，不被衣服挡住） =====
@@ -1971,9 +2026,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             camX = 2f + eased * 3f;
             camY = 1f + eased * 2f;
 
-            // 眼镜微亮（高光极低值，避免变白）
+            // 眼镜微亮（保持正常睁眼，不自发光避免泛白）
             eyeGlow = eased * 0.06f;
-            eyeOpen = 1f + eased * 0.15f;
+            eyeOpen = 1f; // 正常睁眼
         }
         // ---- Phase3: 指尖凝光 ----
         else if (t < P3)
@@ -2010,9 +2065,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             camX = 5f + h * 3f;
             camY = 3f + h * 2f;
 
-            // 眼镜微亮峰值
-            eyeGlow = 0.06f + h * 0.06f;
-            eyeOpen = 1.15f + h * 0.15f;
+            // 眼镜微亮峰值（极低暖光，不泛白）
+            eyeGlow = 0.03f;
+            eyeOpen = 1f; // 正常睁眼
 
             // 白圈开始出现（仅本体）
             whiteCircle = h * 0.08f;
@@ -2054,9 +2109,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             camX = 8f * (1f - eased);
             camY = 5f * (1f - eased);
 
-            // 眼镜微亮渐消
-            eyeGlow = 0.12f * (1f - eased);
-            eyeOpen = 1.3f * (1f - eased * 0.3f);
+            // 眼镜微亮渐消（Phase5 start=0，不回弹）
+            eyeGlow = 0f;
+            eyeOpen = 1f; // 保持正常睁眼
 
             // 白圈扩散（仅本体周围）
             whiteCircle = 0.08f + eased * 0.12f;
@@ -2064,50 +2119,56 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             whiteX = eased * 0.4f;
             whiteY = eased * 0.3f;
         }
-        // ---- Phase5: 消散 ----
+        // ---- Phase5: 消散（已修正 Phase4→Phase5 连续性）----
         else
         {
             float phase5 = (t - 0.75f) / 0.25f;
-            float fade = 1f - EaseOutQuad(phase5);
+            float fade = 1f - EaseOutQuad(phase5); // 1→0
 
             // 身体淡出（飘动也随 fade 消退）
-            SetParameter("ParamBodyAngleX", fade * (-8f + _magicSpringPosX));
-            SetParameter("ParamAngleX", fade * (-10f + _magicSpringPosH));
+            float phase5AngleFade = Mathf.Clamp01(p / CIRCLE_ANGLE_RAMP_DUR); // 参考渐入
+            SetParameter("ParamBodyAngleX", fade * phase5AngleFade * (CIRCLE_BODY_ANGLE_X + _magicSpringPosX));
+            SetParameter("ParamAngleX", fade * phase5AngleFade * (CIRCLE_HEAD_ANGLE_X + _magicSpringPosH));
             SetHandLayer(fade);
             SetParameter("Param92", fade);
             SetHandPose(fade);
             SetSwordFinger(fade);
 
-            // 星星归零
+            // 星星从 Phase4 终值渐消
             starVis = fade * 0.5f;
-            starSize = fade * 0.5f;
+            starSize = fade * 0.77f; // Phase4 终值 0.77，平滑过渡
             outerScale = 0f;
             outerAppear = 0f;
 
-            // 紫环消散
-            ringOuterVis = fade;
-            ringMidVis = fade;
-            ringInnerVis = fade;
-            ringOuterSize = 3.8f + (1f - fade) * 2f; // 放大消散
+            // 紫环从 Phase4 终值渐消（外环已隐，中/内环渐消）
+            ringOuterVis = 0f;          // Phase4 终值=0，保持隐藏
+            ringMidVis = fade * 0.5f;   // Phase4 终值=0.5
+            ringInnerVis = fade * 0.42f; // Phase4 终值=0.42
+            ringOuterSize = 3.8f + (1f - fade) * 2f;
             ringMidSize = 3.1f + (1f - fade) * 1.5f;
             ringInnerSize = 2.4f + (1f - fade) * 1f;
+            ringOuterRot = 150f;        // 保持 Phase4 终值
+            ringMidRot = 225f;
+            ringInnerRot = 300f;
 
             // 黑幕渐消
             darkScreen = fade * 0.25f;
-            darkAppear = fade * 0.18f;
+            darkAppear = fade * 0.13f;  // Phase4 终值=0.13
 
             // 白圈渐消
-            whiteCircle = fade * 0.12f;
-            whiteCircleSize = 0.25f + (1f - fade) * 0.5f; // 放大消散
+            whiteCircle = fade * 0.20f; // Phase4 终值=0.20
+            whiteCircleSize = 0.25f + (1f - fade) * 0.5f;
+            whiteX = fade * 0.4f;
+            whiteY = fade * 0.3f;
 
-            // 镜头归位
-            charScale = 1f + (fade - 1f) * 0.35f;
-            camX = fade * 2f;
-            camY = fade * 1f;
+            // ★ 镜头无突跳：camX/camY 从 Phase4 终值(0,0)开始，不变
+            charScale = 0.8775f + (1f - fade) * 0.1225f; // 0.88→1.0
+            camX = 0f;
+            camY = 0f;
 
-            // 眼镜微亮归零
-            eyeGlow = fade * 0.06f;
-            eyeOpen = 1f + (fade - 1f) * 0.3f;
+            // 眼镜保持正常
+            eyeGlow = 0f;
+            eyeOpen = 1f;
 
             if (t >= 1f) ResetIdleAction();
         }
@@ -2145,9 +2206,27 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("Param156", camY); // 镜头Y
         SetParameter("Param157", charScale); // 人物缩小放大
 
-        // 眼睛——仅睁大瞳孔（自然亮）
-        // Param132 是白色覆盖层（使眼变白），Param63-71（高光/光点）也是白色泛白，全不用
+        // ===== camX 直接驱动头发/衣服（法阵全程持续运动） =====
+        float hairD = Mathf.Clamp(camX * CIRCLE_HAIR_SCALE, -CIRCLE_HAIR_MAX, CIRCLE_HAIR_MAX);
+        SetParameter("Param5", hairD);   SetParameter("Param7", hairD);   SetParameter("Param9", hairD);
+        SetParameter("Param11", hairD);  SetParameter("Param14", hairD);  SetParameter("Param17", hairD);
+        SetParameter("Param19", hairD);  SetParameter("Param21", hairD);
+        SetParameter("Param23", hairD);  SetParameter("Param35", hairD);  SetParameter("Param41", hairD);
+        SetParameter("Param43", hairD);  SetParameter("Param45", hairD);  SetParameter("Param55", hairD);
+        SetParameter("Param62", hairD);  SetParameter("Param91", hairD);  SetParameter("Param74", hairD);
+        SetParameter("Param89", hairD);
+        float hair169D = Mathf.Clamp(camX * CIRCLE_HAIR169_SCALE, -CIRCLE_HAIR169_MAX, CIRCLE_HAIR169_MAX);
+        SetParameter("Param169", hair169D);
+        float clothD = Mathf.Clamp(camX * CIRCLE_CLOTH_SCALE, -CIRCLE_CLOTH_MAX, CIRCLE_CLOTH_MAX);
+        SetParameter("Param82", clothD);  SetParameter("Param87", clothD);
+        SetParameter("Param84", clothD * 0.6f);
+        SetParameter("Param49", clothD);  SetParameter("Param51", clothD);
+        SetParameter("Param57", clothD);  SetParameter("Param60", clothD);
+
+        // 眼睛——用适度睁大瞳孔（自然亮，不泛白）
+        // ★ Param132="白色覆盖层（使眼变白）"，非零即显白，法阵全程保持 0
         SetParameter("Param132", 0f);
+        // Param63-71 是高光/光点层，设零保留默认高光，不额外发白
         SetParameter("Param63", 0f);
         SetParameter("Param64", 0f);
         SetParameter("Param65", 0f);
@@ -2156,7 +2235,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("Param69", 0f);
         SetParameter("Param70", 0f);
         SetParameter("Param71", 0f);
-        // ★ 仅用睁大瞳孔 → 自然更亮（露出更多瞳孔颜色）
+        // ★ 适度睁大瞳孔（露出瞳孔颜色）+ 暖光，自然亮不泛白
         SetParameter("ParamEyeLOpen", eyeOpen);
         SetParameter("ParamEyeROpen", eyeOpen);
     }

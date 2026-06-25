@@ -98,6 +98,25 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     const float CIRCLE_SPRING_STIFF        = 12f;    // 弹簧刚度（越大回正越快）
     const float CIRCLE_SPRING_DAMP_BOUNCE  = 3f;     // 弹性惯性模式阻尼（欠阻尼=有回弹）
     const float CIRCLE_SPRING_DAMP_SOFT    = 9f;     // 柔软跟随模式阻尼（临界阻尼=无过冲）
+
+    // ===================================================================
+    // ⭐9 法阵头发/衣服/姿态参数 — 改这里调幅度和速度
+    // ===================================================================
+    // ★ ParamBodyAngleX / ParamAngleX 是 Live2D 物理输入源：
+    //    物理系统根据 body angle 变化率驱动头发/衣服子刚体。
+    //    突变 → 头发飞起，渐入 → 头发自然飘动。
+    const float CIRCLE_BODY_ANGLE_X    = -8f;     // 身体后仰角度（负=后仰，给物理输入）
+    const float CIRCLE_HEAD_ANGLE_X    = -10f;    // 头部低垂角度（负=低头）
+    const float CIRCLE_ANGLE_RAMP_DUR  = 0.5f;    // 角度渐入时长(秒)，越大头发飞起越轻
+    // ★ camX 驱动头发/衣服（让法阵全程它们持续运动，不依赖物理）
+    const float CIRCLE_HAIR_SCALE      = 0.5f;    // camX → 头发 Param5/7/9/11… 倍数（0=关闭）
+    const float CIRCLE_HAIR_MAX        = 15f;     // 头发驱动最大值
+    const float CIRCLE_HAIR169_SCALE   = 0.3f;    // camX → 头饰 Param169 倍数
+    const float CIRCLE_HAIR169_MAX     = 10f;
+    const float CIRCLE_CLOTH_SCALE     = 0.4f;    // camX → 衣服 Param82/87/84/49/51/57/60 倍数（0=关闭）
+    const float CIRCLE_CLOTH_MAX       = 20f;     // 衣服驱动最大值
+    // ===================================================================
+
     // -- 走路（侧面视角）--
     // 模型转体侧面，腿/手臂摆动可见
     // bodyAngleY符号由方向决定（翻转后视觉一致）
@@ -774,11 +793,17 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
         UpdateBlink();
 
-        // ★ 每帧强制清零眼睛白覆盖层（防 Cubism 物理/表情预设覆盖）
+        // ★ 每帧强制清零眼睛白覆盖层和高光（防 Cubism 物理/表情预设覆盖）
         //    法阵动作已在 UpdateMagicCircle() 中设置了这些值，此处是全局安全网
-        //    Note: Param63-71 是"高光/光点"参数——控制眼睛高光和眼神光，
-        //    设零会移除高光让眼变白，由各动作模块自行管理。
         SetParameter("Param132", 0f);
+        SetParameter("Param63", 0f);
+        SetParameter("Param64", 0f);
+        SetParameter("Param65", 0f);
+        SetParameter("Param67", 0f);
+        SetParameter("Param68", 0f);
+        SetParameter("Param69", 0f);
+        SetParameter("Param70", 0f);
+        SetParameter("Param71", 0f);
 
         // ★ 走路/空闲统一在 LateUpdate 中设置参数
         // 此时 _walkPhase 已在 Update() 中更新完毕，相位准确
@@ -1352,10 +1377,16 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             }
         }
 
-        // === 每帧强制清零眼睛白覆盖层（防 Cubism 物理/默认值覆盖）===
-        //    Param63-71 是高光和光点参数，保持默认（不设零）让眼睛有正常高光
-        //    否则移除高光和眼神光会让眼睛看起来发白/无神
+        // === 每帧强制清零眼睛白覆盖层和高光参数（防 Cubism 物理/默认值覆盖）===
         SetParameter("Param132", 0f); // 白色覆盖层（使眼变白）
+        SetParameter("Param63", 0f);  // 高光R1
+        SetParameter("Param64", 0f);  // 高光R2
+        SetParameter("Param65", 0f);  // 光点R1
+        SetParameter("Param67", 0f);  // 高光L1
+        SetParameter("Param68", 0f);  // 高光L2
+        SetParameter("Param69", 0f);  // 光点R2
+        SetParameter("Param70", 0f);  // 光点L1
+        SetParameter("Param71", 0f);  // 光点L2
 
         // === 空闲动作：加权随机选取（权重越高越容易出现）===
         // 动作: 1=歪头, 2=微笑, 3=挑眉, 4=星辉, 5=伸懒腰, 6=委屈, 7=法阵, 8=害羞
@@ -1860,10 +1891,6 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
     private void UpdateMagicCircle()
     {
-        // ★ 无条件日志 — 确认此方法被调用
-        string modelStatus = _cubismModel != null ? "OK" : "NULL";
-        Debug.Log($"[MAGIC_ENTER] frame={Time.frameCount} p={_complexActionPhase:F4} model={modelStatus}");
-
         float p = _complexActionPhase;
         float duration = CIRCLE_DURATION;
         float t = Mathf.Clamp01(p / duration);
@@ -1902,8 +1929,10 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         _magicSpringVelH += forceH * mdt;
         _magicSpringPosH += _magicSpringVelH * mdt;
 
-        SetParameter("ParamBodyAngleX", -8f + _magicSpringPosX);
-        SetParameter("ParamAngleX", -10f + _magicSpringPosH);
+        // ★ 角度渐入，防止起始帧突变弹飞头发
+        float angleFade = Mathf.Clamp01(p / CIRCLE_ANGLE_RAMP_DUR);
+        SetParameter("ParamBodyAngleX", angleFade * (CIRCLE_BODY_ANGLE_X + _magicSpringPosX));
+        SetParameter("ParamAngleX", angleFade * (CIRCLE_HEAD_ANGLE_X + _magicSpringPosH));
         SetParameter("ParamBodyAngleZ", 0);
 
         // ===== 手部图层优先级（Phase1-4 保持最前，不被衣服挡住） =====
@@ -1997,8 +2026,8 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             camX = 2f + eased * 3f;
             camY = 1f + eased * 2f;
 
-            // ★ 眼镜发光归零（防白色覆盖层泛白）
-            eyeGlow = 0f;
+            // 眼镜微亮（保持正常睁眼，不自发光避免泛白）
+            eyeGlow = eased * 0.06f;
             eyeOpen = 1f; // 正常睁眼
         }
         // ---- Phase3: 指尖凝光 ----
@@ -2036,13 +2065,13 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             camX = 5f + h * 3f;
             camY = 3f + h * 2f;
 
-            // ★ 眼镜发光归零
-            eyeGlow = 0f;
+            // 眼镜微亮峰值（极低暖光，不泛白）
+            eyeGlow = 0.03f;
             eyeOpen = 1f; // 正常睁眼
 
-            // ★ 白圈完全归零——白圈遮罩是眼睛泛白主因
-            whiteCircle = 0f;
-            whiteCircleSize = 0f;
+            // 白圈开始出现（仅本体）
+            whiteCircle = h * 0.08f;
+            whiteCircleSize = h * 0.05f;
         }
         // ---- Phase4: 扩散至全屏 ----
         else if (t < P4)
@@ -2080,15 +2109,15 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             camX = 8f * (1f - eased);
             camY = 5f * (1f - eased);
 
-            // ★ 眼镜归零
+            // 眼镜微亮渐消（Phase5 start=0，不回弹）
             eyeGlow = 0f;
             eyeOpen = 1f; // 保持正常睁眼
 
-            // ★ 白圈归零（防覆盖眼睛变白）
-            whiteCircle = 0f;
-            whiteCircleSize = 0f;
-            whiteX = 0f;
-            whiteY = 0f;
+            // 白圈扩散（仅本体周围）
+            whiteCircle = 0.08f + eased * 0.12f;
+            whiteCircleSize = 0.05f + eased * 0.20f;
+            whiteX = eased * 0.4f;
+            whiteY = eased * 0.3f;
         }
         // ---- Phase5: 消散（已修正 Phase4→Phase5 连续性）----
         else
@@ -2097,8 +2126,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             float fade = 1f - EaseOutQuad(phase5); // 1→0
 
             // 身体淡出（飘动也随 fade 消退）
-            SetParameter("ParamBodyAngleX", fade * (-8f + _magicSpringPosX));
-            SetParameter("ParamAngleX", fade * (-10f + _magicSpringPosH));
+            float phase5AngleFade = Mathf.Clamp01(p / CIRCLE_ANGLE_RAMP_DUR); // 参考渐入
+            SetParameter("ParamBodyAngleX", fade * phase5AngleFade * (CIRCLE_BODY_ANGLE_X + _magicSpringPosX));
+            SetParameter("ParamAngleX", fade * phase5AngleFade * (CIRCLE_HEAD_ANGLE_X + _magicSpringPosH));
             SetHandLayer(fade);
             SetParameter("Param92", fade);
             SetHandPose(fade);
@@ -2125,11 +2155,11 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             darkScreen = fade * 0.25f;
             darkAppear = fade * 0.13f;  // Phase4 终值=0.13
 
-            // ★ 白圈归零（防覆盖眼睛变白）
-            whiteCircle = 0f;
-            whiteCircleSize = 0f;
-            whiteX = 0f;
-            whiteY = 0f;
+            // 白圈渐消
+            whiteCircle = fade * 0.20f; // Phase4 终值=0.20
+            whiteCircleSize = 0.25f + (1f - fade) * 0.5f;
+            whiteX = fade * 0.4f;
+            whiteY = fade * 0.3f;
 
             // ★ 镜头无突跳：camX/camY 从 Phase4 终值(0,0)开始，不变
             charScale = 0.8775f + (1f - fade) * 0.1225f; // 0.88→1.0
@@ -2176,57 +2206,38 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("Param156", camY); // 镜头Y
         SetParameter("Param157", charScale); // 人物缩小放大
 
-        // 眼睛——保持正常睁眼
-        // ★ Param132=眼镜发光（CDI 名），微量暖光防眼惨白
-        SetParameter("Param132", eyeGlow);
-        // ★ 白色透明遮罩（Param138/139）保持归零，防白色覆盖
-        SetParameter("Param138", 0f);
-        SetParameter("Param139", 0f);
-        // ★ 高光/光点参数（Param63-71）：保持默认让 Live2D 绘制正常高光，
-        //   不强制设零，否则移除高光和眼神光会导致眼睛看起来发白/无神。
-        //   Param63/64=高光R1/R2, Param67/68=高光L1/L2
-        //   Param65/69=光点R1/R2, Param70/71=光点L1/L2
-        // 适度睁大瞳孔（露出瞳孔颜色）+ 暖光，自然亮不泛白
+        // ===== camX 直接驱动头发/衣服（法阵全程持续运动） =====
+        float hairD = Mathf.Clamp(camX * CIRCLE_HAIR_SCALE, -CIRCLE_HAIR_MAX, CIRCLE_HAIR_MAX);
+        SetParameter("Param5", hairD);   SetParameter("Param7", hairD);   SetParameter("Param9", hairD);
+        SetParameter("Param11", hairD);  SetParameter("Param14", hairD);  SetParameter("Param17", hairD);
+        SetParameter("Param19", hairD);  SetParameter("Param21", hairD);
+        SetParameter("Param23", hairD);  SetParameter("Param35", hairD);  SetParameter("Param41", hairD);
+        SetParameter("Param43", hairD);  SetParameter("Param45", hairD);  SetParameter("Param55", hairD);
+        SetParameter("Param62", hairD);  SetParameter("Param91", hairD);  SetParameter("Param74", hairD);
+        SetParameter("Param89", hairD);
+        float hair169D = Mathf.Clamp(camX * CIRCLE_HAIR169_SCALE, -CIRCLE_HAIR169_MAX, CIRCLE_HAIR169_MAX);
+        SetParameter("Param169", hair169D);
+        float clothD = Mathf.Clamp(camX * CIRCLE_CLOTH_SCALE, -CIRCLE_CLOTH_MAX, CIRCLE_CLOTH_MAX);
+        SetParameter("Param82", clothD);  SetParameter("Param87", clothD);
+        SetParameter("Param84", clothD * 0.6f);
+        SetParameter("Param49", clothD);  SetParameter("Param51", clothD);
+        SetParameter("Param57", clothD);  SetParameter("Param60", clothD);
+
+        // 眼睛——用适度睁大瞳孔（自然亮，不泛白）
+        // ★ Param132="白色覆盖层（使眼变白）"，非零即显白，法阵全程保持 0
+        SetParameter("Param132", 0f);
+        // Param63-71 是高光/光点层，设零保留默认高光，不额外发白
+        SetParameter("Param63", 0f);
+        SetParameter("Param64", 0f);
+        SetParameter("Param65", 0f);
+        SetParameter("Param67", 0f);
+        SetParameter("Param68", 0f);
+        SetParameter("Param69", 0f);
+        SetParameter("Param70", 0f);
+        SetParameter("Param71", 0f);
+        // ★ 适度睁大瞳孔（露出瞳孔颜色）+ 暖光，自然亮不泛白
         SetParameter("ParamEyeLOpen", eyeOpen);
         SetParameter("ParamEyeROpen", eyeOpen);
-
-        // ★★★ 无条件调试日志：输出所有眼睛相关参数的模型实际值 ★★★
-        if (_cubismModel != null)
-        {
-            System.Text.StringBuilder sb = new System.Text.StringBuilder();
-            string[] eyeParams = new string[] {
-                "Param132","Param136","Param138","Param139","Param133","Param134","Param135",
-                "ParamEyeLOpen","ParamEyeROpen","Param63","Param64","Param65","Param67","Param68","Param69",
-                "Param121","Param137","Param149","Param150","Param","Param2","Param3","Param4",
-                "Param159","Param160","Param161","Param162"
-            };
-            foreach (string pn in eyeParams)
-            {
-                var pp = _cubismModel.Parameters.FindById(pn);
-                if (pp != null) sb.Append($" {pn}={pp.Value:F4}");
-            }
-            string phase = t < 0.2f ? "P1" : t < 0.45f ? "P2" : t < 0.5f ? "P3" : t < 0.75f ? "P4" : "P5";
-            if (sb.Length > 0)
-                Debug.Log($"[MAGIC_ALL] t={t:F4} phase={phase}{sb.ToString()}");
-        }
-        // ★★★ 无条件输出所有眼相关 ArtMesh 的透明度
-        if (_cubismModel?.Drawables != null)
-        {
-            System.Text.StringBuilder sb2 = new System.Text.StringBuilder();
-            sb2.Append($"[MAGIC_MESH]");
-            foreach (var drawable in _cubismModel.Drawables)
-            {
-                if (drawable.name.IndexOf("eye", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    drawable.name.IndexOf("目", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    drawable.name.IndexOf("眼", System.StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    sb2.Append($" [{drawable.name}](id={drawable.Id}) mulCol={drawable.MultiplyColor} scrCol={drawable.ScreenColor}");
-                }
-            }
-            if (sb2.Length > 20)
-                Debug.Log(sb2.ToString());
-        }
-
     }
 
     /// <summary>设置剑指手指参数（h=0~1 控制强度，用于淡入淡出，不设Param92防10指重叠）</summary>
@@ -2417,9 +2428,16 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("Param133", 0f); // 白圈大小
         SetParameter("Param134", 0f); // 白圈位移x
         SetParameter("Param135", 0f); // 白圈位移y
-        SetParameter("Param132", 0f); // 白色覆盖层（使眼变白）
-        // ★ 高光/光点参数（Param63-71）：重置时由状态机自然恢复，
-        // 不要强制归零（否则移除高光和眼神光会让眼睛看起来发白/无神）
+        SetParameter("Param132", 0f); // 眼镜发光（白色覆盖层）
+        // 眼睛高光/光点参数归零
+        SetParameter("Param63", 0f); // 高光R1
+        SetParameter("Param64", 0f); // 高光R2
+        SetParameter("Param67", 0f); // 高光L1
+        SetParameter("Param68", 0f); // 高光L2
+        SetParameter("Param65", 0f); // 光点R1
+        SetParameter("Param69", 0f); // 光点R2
+        SetParameter("Param70", 0f); // 光点L1
+        SetParameter("Param71", 0f); // 光点L2
 
         if (wasLocked)
         {
