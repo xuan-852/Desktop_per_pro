@@ -48,6 +48,13 @@ public class ChatManager : MonoBehaviour
             memGo.AddComponent<PetMemory>();
             memGo.transform.SetParent(transform);
         }
+
+        // ——— 注册反思回调：当 PetMemory 需要反思时，由我们调 LLM ———
+        PetMemory.Instance.OnReflectRequest = candidates =>
+        {
+            // 同步方式不支持回调，改为协程触发
+            return null;
+        };
     }
 
     /// <summary>构建最终 SystemPrompt（注入时间 + 长期记忆）</summary>
@@ -198,6 +205,16 @@ public class ChatManager : MonoBehaviour
         {
             var next = _messageQueue.Dequeue();
             SendMessage(next.text, next.onUpdate);
+        }
+
+        // ——— 检查是否需要记忆反思（不阻塞对话流）———
+        if (PetMemory.Instance != null)
+        {
+            var candidates = PetMemory.Instance.CheckReflection();
+            if (candidates != null && candidates.Count >= 2)
+            {
+                StartCoroutine(DoReflection(candidates));
+            }
         }
     }
 
@@ -878,6 +895,61 @@ public class ChatManager : MonoBehaviour
             }
         }
         return string.IsNullOrEmpty(q) ? "未知" : q;
+    }
+
+    // ==================================================================
+    //  记忆反思（后台调 DeepSeek 提炼高层次洞察）
+    // ==================================================================
+
+    /// <summary>反思协程：将候选记忆发给 DeepSeek 做高层提炼</summary>
+    private IEnumerator DoReflection(List<PetMemory.MemoryEntry> candidates)
+    {
+        string prompt = PetMemory.Instance.BuildReflectionPrompt(candidates);
+        string reply = null;
+
+        // 使用 DeepSeek API（不占对话历史，纯粹后台调用）
+        string reflectionUrl = apiUrl.TrimEnd('/') + "/v1/chat/completions";
+        string jsonBody = "{\"model\":\"" + EscapeJson(model)
+            + "\",\"messages\":[{\"role\":\"user\",\"content\":\""
+            + EscapeJson(prompt) + "\"}],\"stream\":false}";
+
+        using (UnityWebRequest req = new UnityWebRequest(reflectionUrl, "POST"))
+        {
+            byte[] bodyBytes = Encoding.UTF8.GetBytes(jsonBody);
+            req.uploadHandler = new UploadHandlerRaw(bodyBytes);
+            req.downloadHandler = new DownloadHandlerBuffer();
+            req.SetRequestHeader("Content-Type", "application/json");
+            req.timeout = 15;
+            if (!string.IsNullOrEmpty(apiKey))
+                req.SetRequestHeader("Authorization", "Bearer " + apiKey);
+
+            yield return req.SendWebRequest();
+
+            if (req.result == UnityWebRequest.Result.Success)
+            {
+                reply = req.downloadHandler.text;
+            }
+        }
+
+        if (string.IsNullOrEmpty(reply)) yield break;
+
+        // 从响应 JSON 中提取 content
+        string reflectionContent = ExtractContent(reply);
+        if (string.IsNullOrEmpty(reflectionContent)) yield break;
+
+        // 逐行写入 reflection 记忆
+        string[] lines = reflectionContent.Split(new[] { '\n', '\r' },
+            StringSplitOptions.RemoveEmptyEntries);
+        foreach (string line in lines)
+        {
+            string trimmed = line.Trim();
+            if (trimmed.Length > 5)
+            {
+                PetMemory.Instance.CommitReflection(trimmed);
+            }
+        }
+
+        Debug.Log($"[ChatManager] 🧠 记忆反思完成，产生 {lines.Length} 条洞察");
     }
 
     // ==================================================================

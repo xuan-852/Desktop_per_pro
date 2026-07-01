@@ -5,7 +5,7 @@ using System.Linq;
 using UnityEngine;
 
 /// <summary>
-/// 符玄「忆境」— 分层长期记忆系统 (Phase 1)
+/// 符玄「忆境」— 分层长期记忆系统 + 反思反射 (Phase 2)
 /// 
 /// 改进对比旧版:
 ///   ✅ 分层注入: 核心事实始终保留 + Top-N 重要记忆 + 近期琐事
@@ -14,6 +14,7 @@ using UnityEngine;
 ///   ✅ 对话记录: 不只记工具调用，也记日常对话内容
 ///   ✅ 对话摘要: 持续更新的近日印象
 ///   ✅ 话题冷却: 每个话题独立冷却，冷却中跳过
+///   ✅ 反思反射: 重要性积分累计达阈值时触发 LLM 提炼高层次洞察
 /// </summary>
 public class PetMemory : MonoBehaviour
 {
@@ -29,6 +30,13 @@ public class PetMemory : MonoBehaviour
 
     [Tooltip("注入 prompt 时保留的最近记忆条数")]
     public int topRecentCount = 3;
+
+    [Header("反思反射")]
+    [Tooltip("重要性积分累计达到此值时触发反思")]
+    public int reflectionThreshold = 30;
+
+    [Tooltip("离上次反思的最低冷却（秒），防止频繁反思")]
+    public float reflectionCooldown = 300f; // 5 分钟
 
     // ==================================================================
 
@@ -55,10 +63,17 @@ public class PetMemory : MonoBehaviour
         public List<string> coreFacts = new List<string>();
         /// <summary>近日对话摘要（始终注入）</summary>
         public string conversationSummary = "";
+        /// <summary>上次反思时已处理的记忆索引</summary>
+        public int lastReflectionIndex = 0;
     }
 
     private MemoryData _data = new MemoryData();
     private Dictionary<string, float> _topicCooldowns = new Dictionary<string, float>();
+    private float _lastReflectionTime = -999f;
+    /// <summary>从上一次反思后累计的重要性积分</summary>
+    private int _reflectionAccum = 0;
+    /// <summary>外部注入的反思回调（由 ChatManager 注册）</summary>
+    public System.Func<List<MemoryEntry>, string> OnReflectRequest;
 
     public static PetMemory Instance { get; private set; }
 
@@ -74,6 +89,19 @@ public class PetMemory : MonoBehaviour
         Instance = this;
         DontDestroyOnLoad(gameObject);
         Load();
+        // 启动时根据 lastReflectionIndex 重建积分
+        RebuildReflectionAccum();
+    }
+
+    /// <summary>重建积分（重启后恢复之前积累的积分）</summary>
+    private void RebuildReflectionAccum()
+    {
+        _reflectionAccum = 0;
+        for (int i = _data.lastReflectionIndex; i < _data.entries.Count; i++)
+        {
+            if (_data.entries[i].category != "reflection")
+                _reflectionAccum += _data.entries[i].importance;
+        }
     }
 
     // ==================================================================
@@ -121,6 +149,10 @@ public class PetMemory : MonoBehaviour
         // 更新冷却
         if (!string.IsNullOrEmpty(topic))
             _topicCooldowns[topic] = Time.time;
+
+        // ——— 非 reflection 记忆计入积分 ———
+        if (category != "reflection")
+            _reflectionAccum += importance;
 
         Save();
     }
@@ -177,6 +209,81 @@ public class PetMemory : MonoBehaviour
     }
 
     public string GetConversationSummary() => _data.conversationSummary;
+
+    // ==================================================================
+    //  反思反射 (Reflection)
+    // ==================================================================
+
+    /// <summary>
+    /// 检查是否应该触发反思。
+    /// 如果积分达标且冷却已过，返回待反思的记忆列表；
+    /// 否则返回 null。
+    /// </summary>
+    public List<MemoryEntry> CheckReflection()
+    {
+        if (_reflectionAccum < reflectionThreshold) return null;
+        if (Time.time - _lastReflectionTime < reflectionCooldown) return null;
+
+        // 取出从上次反思到现在的非 reflection 记忆
+        var candidates = new List<MemoryEntry>();
+        for (int i = _data.lastReflectionIndex; i < _data.entries.Count; i++)
+        {
+            if (_data.entries[i].category != "reflection")
+                candidates.Add(_data.entries[i]);
+        }
+
+        if (candidates.Count < 2) return null; // 太少，没意义
+        return candidates;
+    }
+
+    /// <summary>
+    /// 完成一次反思循环：将 LLM 返回的提炼写入记忆，
+    /// 重置积分计数器。
+    /// </summary>
+    public void CommitReflection(string reflectionText)
+    {
+        // 写入作为高重要性 reflection 记忆
+        _data.entries.Add(new MemoryEntry
+        {
+            summary = reflectionText,
+            timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm"),
+            topic = "反思",
+            importance = 8,
+            category = "reflection"
+        });
+
+        // 更新索引和积分
+        _data.lastReflectionIndex = _data.entries.Count - 1;
+        _reflectionAccum = 0;
+        _lastReflectionTime = Time.time;
+
+        Save();
+        Debug.Log($"[PetMemory] 🧠 反思完成: {reflectionText}");
+    }
+
+    /// <summary>构建反思 prompt，供 ChatManager 调 LLM 用</summary>
+    public string BuildReflectionPrompt(List<MemoryEntry> candidates)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("你是符玄，仙舟「罗浮」太卜司之首。");
+        sb.AppendLine("以下是你的忆境中最近积累的一些观察和记忆碎片：");
+        sb.AppendLine();
+
+        for (int i = 0; i < candidates.Count; i++)
+        {
+            var e = candidates[i];
+            sb.AppendLine($"{i + 1}. ({e.timestamp}) [{e.topic}] {e.summary}");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("请根据以上碎片提炼出 1-2 条高层次观察结论——");
+        sb.AppendLine("这些结论应能反映主人的近况、习惯、偏好或情绪变化。");
+        sb.AppendLine("用第一人称（本座），每条一句话，不要列举事实，而是给出洞察。");
+        sb.AppendLine("例如：「本座观主人近日勤于温习，必有要考。」");
+        sb.AppendLine("例如：「主人似乎对音乐颇有兴致，可常与其论之。」");
+        sb.AppendLine("直接输出结论，不要前缀，每条一行。");
+        return sb.ToString();
+    }
 
     // ==================================================================
     //  记忆检索（分层注入 system prompt）
