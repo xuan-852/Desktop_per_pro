@@ -4,6 +4,7 @@ using UnityEngine.Networking;
 using System.Collections;
 using System.Text;
 using System.Collections.Generic;
+using System.Linq;
 
 /// <summary>
 /// 聊天管理器 — 支持 OpenAI 兼容 Function Calling (工具调用)
@@ -238,6 +239,8 @@ public class ChatManager : MonoBehaviour
                 {
                     _history.Add(new Entry { role = "assistant", content = content });
                 }
+                // ——— 自动记录对话内容到长期记忆 ———
+                RecordConversationMemory(content);
                 yield break;
             }
 
@@ -756,6 +759,11 @@ public class ChatManager : MonoBehaviour
                 summary = $"主人查询了: 「{searchQ}」";
                 break;
 
+            case "take_screenshot":
+                topic = "截屏";
+                summary = "本座动用了法眼摄形之术，窥见了主人的屏幕";
+                break;
+
             default:
                 // 其他工具只记录名称
                 if (result.Length > 60)
@@ -765,7 +773,75 @@ public class ChatManager : MonoBehaviour
 
         if (!string.IsNullOrEmpty(summary))
         {
-            PetMemory.Instance.AddMemory(summary, topic);
+            PetMemory.Instance.AddMemory(summary, topic, "tool");
+        }
+    }
+
+    // ==================================================================
+    //  对话记忆记录 & 摘要
+    // ==================================================================
+
+    private int _conversationSinceSummary = 0;
+    private const int SUMMARY_INTERVAL = 15; // 每 15 次对话更新摘要
+
+    /// <summary>记录纯文字回复到长期记忆（按重要性过滤）</summary>
+    private void RecordConversationMemory(string reply)
+    {
+        if (PetMemory.Instance == null || string.IsNullOrEmpty(reply)) return;
+
+        _conversationSinceSummary++;
+
+        // 取用户最后一条消息
+        var lastUserMsg = "";
+        for (int i = _history.Count - 1; i >= 0; i--)
+        {
+            if (_history[i].role == "user")
+            {
+                lastUserMsg = _history[i].content;
+                break;
+            }
+        }
+
+        // ——— 记录用户的重要话题 ———
+        if (!string.IsNullOrEmpty(lastUserMsg))
+        {
+            string[] importantMarkers = { "我叫", "我是", "喜欢", "讨厌", "我的", "我在",
+                "工作", "考试", "学习", "毕业", "生日" };
+            if (importantMarkers.Any(m => lastUserMsg.Contains(m)))
+            {
+                string brief = lastUserMsg.Length > 40
+                    ? lastUserMsg.Substring(0, 40) + "…"
+                    : lastUserMsg;
+                PetMemory.Instance.AddMemory($"主人提及: 「{brief}」", "对话", "conversation");
+            }
+            else if (UnityEngine.Random.value < 0.15f)
+            {
+                // 15% 概率记录日常闲聊，丰富记忆
+                string brief = lastUserMsg.Length > 30
+                    ? lastUserMsg.Substring(0, 30) + "…"
+                    : lastUserMsg;
+                PetMemory.Instance.AddMemory($"和主人聊到了: 「{brief}」", "闲聊", "conversation");
+            }
+        }
+
+        // ——— 到达摘要间隔时，自动更新近日印象 ———
+        if (_conversationSinceSummary >= SUMMARY_INTERVAL)
+        {
+            _conversationSinceSummary = 0;
+            // 收集近期话题（兼容 .NET Standard 2.0，不用 TakeLast）
+            var userMessages = _history.Where(e => e.role == "user").ToList();
+            int skip = Math.Max(0, userMessages.Count - 10);
+            var recentTopics = userMessages.Skip(skip).Select(e => e.content).ToList();
+
+            if (recentTopics.Count > 0)
+            {
+                string combined = string.Join(" | ", recentTopics);
+                string summary = combined.Length > 100
+                    ? combined.Substring(0, 100) + "…"
+                    : combined;
+                PetMemory.Instance.UpdateConversationSummary(
+                    $"近日与主人谈论了: {summary}");
+            }
         }
     }
 

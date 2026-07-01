@@ -5,18 +5,30 @@ using System.Linq;
 using UnityEngine;
 
 /// <summary>
-/// 符玄「忆境」— 长期记忆系统
-/// 记录关键对话摘要到 pet_memory.json，每次请求时注入 system prompt
-/// 让符玄真的「记得你」
+/// 符玄「忆境」— 分层长期记忆系统 (Phase 1)
+/// 
+/// 改进对比旧版:
+///   ✅ 分层注入: 核心事实始终保留 + Top-N 重要记忆 + 近期琐事
+///   ✅ 重要性评分: 每条记忆 1-10 分，自动根据话题/内容计算
+///   ✅ 重要性裁剪: 超出上限时丢弃最不重要的，而非最早加入的
+///   ✅ 对话记录: 不只记工具调用，也记日常对话内容
+///   ✅ 对话摘要: 持续更新的近日印象
+///   ✅ 话题冷却: 每个话题独立冷却，冷却中跳过
 /// </summary>
 public class PetMemory : MonoBehaviour
 {
     [Header("记忆配置")]
-    [Tooltip("最多保留多少条记忆")]
-    public int maxMemories = 20;
+    [Tooltip("最多保留多少条普通记忆")]
+    public int maxMemories = 30;
 
-    [Tooltip("每次对话后记忆冷却（秒），防止同一话题重复记录")]
+    [Tooltip("同一话题冷却（秒），防止短时间内反复记录")]
     public float memoryCooldown = 120f;
+
+    [Tooltip("注入 prompt 时保留的高重要性记忆条数")]
+    public int topImportantCount = 5;
+
+    [Tooltip("注入 prompt 时保留的最近记忆条数")]
+    public int topRecentCount = 3;
 
     // ==================================================================
 
@@ -29,16 +41,24 @@ public class PetMemory : MonoBehaviour
         public string timestamp;
         /// <summary>话题标签，用于去重</summary>
         public string topic;
+        /// <summary>重要性 1-10，10=极重要</summary>
+        public int importance = 5;
+        /// <summary>类别: tool / conversation / observation / reflection</summary>
+        public string category = "conversation";
     }
 
     [System.Serializable]
     public class MemoryData
     {
         public List<MemoryEntry> entries = new List<MemoryEntry>();
+        /// <summary>核心事实（始终注入 system prompt）</summary>
+        public List<string> coreFacts = new List<string>();
+        /// <summary>近日对话摘要（始终注入）</summary>
+        public string conversationSummary = "";
     }
 
     private MemoryData _data = new MemoryData();
-    private float _lastMemoryTime = -999f;
+    private Dictionary<string, float> _topicCooldowns = new Dictionary<string, float>();
 
     public static PetMemory Instance { get; private set; }
 
@@ -60,60 +80,202 @@ public class PetMemory : MonoBehaviour
     //  公开接口
     // ==================================================================
 
-    /// <summary>
-    /// 添加一条记忆
-    /// </summary>
+    /// <summary>添加记忆（自动评分重要性）</summary>
     /// <param name="summary">记忆摘要</param>
-    /// <param name="topic">话题标签（用于去重，如"天气""成绩""文件搜索"）</param>
-    public void AddMemory(string summary, string topic = "")
+    /// <param name="topic">话题标签（用于去重）</param>
+    /// <param name="category">类别: tool / conversation / observation / reflection</param>
+    public void AddMemory(string summary, string topic = "", string category = "conversation")
     {
-        // 冷却检查：同一话题不重复记录
-        if (!string.IsNullOrEmpty(topic) && Time.time - _lastMemoryTime < memoryCooldown)
+        int importance = CalculateImportance(summary, topic, category);
+        AddMemoryWithImportance(summary, topic, category, importance);
+    }
+
+    /// <summary>添加记忆（指定重要性）</summary>
+    public void AddMemoryWithImportance(string summary, string topic, string category, int importance)
+    {
+        importance = Mathf.Clamp(importance, 1, 10);
+
+        // 话题冷却检查
+        if (!string.IsNullOrEmpty(topic) && _topicCooldowns.TryGetValue(topic, out float lastTime))
         {
-            var last = _data.entries.LastOrDefault(e => e.topic == topic);
-            if (last != null) return;
+            if (Time.time - lastTime < memoryCooldown)
+                return; // 冷却中，跳过
         }
 
         _data.entries.Add(new MemoryEntry
         {
             summary = summary,
             timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm"),
-            topic = topic
+            topic = topic,
+            importance = importance,
+            category = category
         });
 
-        // 裁剪
+        // 超出上限时，丢弃重要性最低的（而非最早的）
         while (_data.entries.Count > maxMemories)
-            _data.entries.RemoveAt(0);
+        {
+            var lowest = _data.entries.OrderBy(e => e.importance).First();
+            _data.entries.Remove(lowest);
+        }
 
-        _lastMemoryTime = Time.time;
+        // 更新冷却
+        if (!string.IsNullOrEmpty(topic))
+            _topicCooldowns[topic] = Time.time;
+
         Save();
     }
 
-    /// <summary>获取格式化的记忆文本（注入到 system prompt 用）</summary>
-    public string GetFormattedMemories()
+    /// <summary>智能重要性计算（根据话题和关键词自动评分）</summary>
+    private int CalculateImportance(string summary, string topic, string category)
     {
-        if (_data.entries.Count == 0) return "";
-
-        var sb = new System.Text.StringBuilder();
-        sb.AppendLine("\n【本座的记忆（忆境残象）】");
-        sb.AppendLine("以下是你记得的关于主人的一些事（时间从旧到新）：");
-
-        // 按时间排序（旧→新）
-        var sorted = _data.entries.OrderBy(e => e.timestamp).ToList();
-        for (int i = 0; i < sorted.Count; i++)
+        if (category == "tool")
         {
-            var e = sorted[i];
-            sb.AppendLine($"{{entry_{i}}}. ({e.timestamp}) {e.summary}");
+            if (topic == "考试" || topic == "成绩") return 8;
+            if (topic == "提醒")                   return 7;
+            if (topic == "文件搜索")                return 6;
+            if (topic == "搜索" || topic == "截屏") return 5;
+            if (topic == "天气")                    return 4;
+            return 5;
         }
 
-        sb.AppendLine("（这些是忆境中残留的印象，可能不完全准确。如果主人提到相关的事，可以参考这些记忆。）");
+        if (category == "reflection") return 7;
+
+        // 对话内容关键词检测
+        string s = summary.ToLower();
+        if (s.Contains("喜欢")   || s.Contains("讨厌")  || s.Contains("最爱") ||
+            s.Contains("习惯")   || s.Contains("生日")  || s.Contains("名字") ||
+            s.Contains("禁忌")   || s.Contains("秘密")) return 8;
+        if (s.Contains("工作")   || s.Contains("考试")  || s.Contains("学习") ||
+            s.Contains("项目")   || s.Contains("代码")  || s.Contains("毕业")) return 6;
+        if (s.Contains("游戏")   || s.Contains("动漫")  || s.Contains("音乐") ||
+            s.Contains("电影")   || s.Contains("小说")) return 5;
+        return 3; // 一般闲聊
+    }
+
+    /// <summary>添加核心事实（始终注入，不会被裁剪）</summary>
+    public void AddCoreFact(string fact)
+    {
+        if (!_data.coreFacts.Contains(fact))
+        {
+            _data.coreFacts.Add(fact);
+            Save();
+        }
+    }
+
+    /// <summary>移除核心事实</summary>
+    public void RemoveCoreFact(string fact)
+    {
+        _data.coreFacts.Remove(fact);
+        Save();
+    }
+
+    /// <summary>更新近日对话摘要</summary>
+    public void UpdateConversationSummary(string summary)
+    {
+        _data.conversationSummary = summary;
+        Save();
+    }
+
+    public string GetConversationSummary() => _data.conversationSummary;
+
+    // ==================================================================
+    //  记忆检索（分层注入 system prompt）
+    // ==================================================================
+
+    /// <summary>
+    /// 获取格式化的记忆文本（分层注入）
+    /// 第一层: 核心事实（始终保留）
+    /// 第二层: 近日对话摘要
+    /// 第三层: Top-N 高重要性记忆
+    /// 第四层: 最近几条记忆（补充）
+    /// </summary>
+    public string GetFormattedMemories()
+    {
+        if (_data.entries.Count == 0 && _data.coreFacts.Count == 0
+            && string.IsNullOrEmpty(_data.conversationSummary))
+            return "";
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("\n【本座的忆境残象】");
+
+        // ——— 第一层：核心事实 ———
+        if (_data.coreFacts.Count > 0)
+        {
+            sb.AppendLine("┌─ 本座确定知晓之事 ─┐");
+            foreach (var fact in _data.coreFacts)
+                sb.AppendLine($"  ✦ {fact}");
+            sb.AppendLine("└────────────────────┘");
+        }
+
+        // ——— 第二层：对话摘要 ———
+        if (!string.IsNullOrEmpty(_data.conversationSummary))
+        {
+            sb.AppendLine("【近日印象】" + _data.conversationSummary);
+        }
+
+        // ——— 第三层：高重要性记忆（Top-N）———
+        var important = _data.entries
+            .OrderByDescending(e => e.importance)
+            .ThenByDescending(e => e.timestamp)
+            .Take(topImportantCount)
+            .ToList();
+
+        if (important.Count > 0)
+        {
+            sb.AppendLine("【印象深刻之事】");
+            for (int i = 0; i < important.Count; i++)
+            {
+                var e = important[i];
+                string imp = new string('✦', Mathf.Clamp(e.importance / 2, 1, 5));
+                sb.AppendLine($"  ({e.timestamp}) [{imp}] {e.summary}");
+            }
+        }
+
+        // ——— 第四层：最近记忆（去重后补充）———
+        var recent = _data.entries
+            .OrderByDescending(e => e.timestamp)
+            .Take(topRecentCount + important.Count)
+            .Where(r => !important.Contains(r))
+            .Take(topRecentCount)
+            .ToList();
+
+        if (recent.Count > 0)
+        {
+            sb.AppendLine("【近日琐事】");
+            foreach (var e in recent)
+                sb.AppendLine($"  ({e.timestamp}) {e.summary}");
+        }
+
+        sb.AppendLine("（忆境残象或有模糊，若主人提及相关之事，本座自可据此推演。）");
         return sb.ToString();
+    }
+
+    /// <summary>获取所有记忆（按时间倒序）</summary>
+    public List<MemoryEntry> GetAllMemories()
+    {
+        return _data.entries.OrderByDescending(e => e.timestamp).ToList();
+    }
+
+    /// <summary>按关键词搜索记忆</summary>
+    public List<MemoryEntry> SearchMemories(string keyword)
+    {
+        if (string.IsNullOrEmpty(keyword)) return new List<MemoryEntry>();
+        string kw = keyword.ToLower();
+        return _data.entries
+            .Where(e => e.summary.ToLower().Contains(kw) || e.topic.ToLower().Contains(kw))
+            .OrderByDescending(e => e.importance)
+            .ThenByDescending(e => e.timestamp)
+            .Take(5)
+            .ToList();
     }
 
     /// <summary>清空所有记忆</summary>
     public void ClearMemories()
     {
         _data.entries.Clear();
+        _data.coreFacts.Clear();
+        _data.conversationSummary = "";
+        _topicCooldowns.Clear();
         Save();
         Debug.Log("[PetMemory] 🧹 忆境已清空");
     }
@@ -152,7 +314,13 @@ public class PetMemory : MonoBehaviour
             if (loaded != null)
             {
                 _data = loaded;
-                Debug.Log($"[PetMemory] ✅ 忆境已载入，共 {_data.entries.Count} 条记忆 ({FilePath})");
+                // 兼容旧格式：旧记录没有 importance，默认 5
+                foreach (var e in _data.entries)
+                {
+                    if (e.importance == 0) e.importance = 5;
+                    if (string.IsNullOrEmpty(e.category)) e.category = "tool";
+                }
+                Debug.Log($"[PetMemory] ✅ 忆境已载入，共 {_data.entries.Count} 条记忆");
             }
         }
         catch (Exception e)
