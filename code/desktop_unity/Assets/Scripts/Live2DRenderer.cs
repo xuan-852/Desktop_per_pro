@@ -95,26 +95,29 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     const float CIRCLE_FLOAT_AMPLITUDE_BODY = 4f;    // 身体X轴漂移幅度 ±4°
     const float CIRCLE_FLOAT_AMPLITUDE_HEAD = 3f;    // 头部X轴漂移幅度 ±3°
     const float CIRCLE_FLOAT_SPEED         = 0.4f;   // Perlin 噪声速度
-    const float CIRCLE_SPRING_STIFF        = 12f;    // 弹簧刚度（越大回正越快）
+    const float CIRCLE_SPRING_STIFF        = 8f;     // 弹簧刚度（越大回正越快）
     const float CIRCLE_SPRING_DAMP_BOUNCE  = 3f;     // 弹性惯性模式阻尼（欠阻尼=有回弹）
     const float CIRCLE_SPRING_DAMP_SOFT    = 9f;     // 柔软跟随模式阻尼（临界阻尼=无过冲）
 
     // ===================================================================
-    // ⭐9 法阵头发/衣服/姿态参数 — 改这里调幅度和速度
+    // ⭐9 法阵姿态参数 — 改这里调角度和渐入速度
     // ===================================================================
-    // ★ ParamBodyAngleX / ParamAngleX 是 Live2D 物理输入源：
-    //    物理系统根据 body angle 变化率驱动头发/衣服子刚体。
-    //    突变 → 头发飞起，渐入 → 头发自然飘动。
-    const float CIRCLE_BODY_ANGLE_X    = -8f;     // 身体后仰角度（负=后仰，给物理输入）
+    // ★ 身体/头部角度给 Live2D 物理输入，带动头发/衣服自然摆动。
+    const float CIRCLE_BODY_ANGLE_X    = -8f;     // 身体后仰角度（负=后仰）
     const float CIRCLE_HEAD_ANGLE_X    = -10f;    // 头部低垂角度（负=低头）
-    const float CIRCLE_ANGLE_RAMP_DUR  = 0.5f;    // 角度渐入时长(秒)，越大头发飞起越轻
-    // ★ camX 驱动头发/衣服（让法阵全程它们持续运动，不依赖物理）
-    const float CIRCLE_HAIR_SCALE      = 0.5f;    // camX → 头发 Param5/7/9/11… 倍数（0=关闭）
-    const float CIRCLE_HAIR_MAX        = 15f;     // 头发驱动最大值
-    const float CIRCLE_HAIR169_SCALE   = 0.3f;    // camX → 头饰 Param169 倍数
-    const float CIRCLE_HAIR169_MAX     = 10f;
-    const float CIRCLE_CLOTH_SCALE     = 0.4f;    // camX → 衣服 Param82/87/84/49/51/57/60 倍数（0=关闭）
-    const float CIRCLE_CLOTH_MAX       = 20f;     // 衣服驱动最大值
+    const float CIRCLE_ANGLE_RAMP_DUR  = 1.0f;    // 角度渐入时长(秒)，越大头发/衣服越平缓
+    // ★ 弹簧速度 → 头发/辫子/饰品/衣服（像拖拽回复一样，身体/头部飘动时自然甩动）
+    const float CIRCLE_HAIR_SMOOTH      = 0.35f;  // SmoothDamp 平滑时间（越大越缓，防速度尖峰突跳）
+    const float CIRCLE_HEAD_HAIR_FROM_VEL = 0.25f; // 头部头发（刘海/头发物理2/鬓发/后短发）— 10%原幅
+    const float CIRCLE_HEAD_HAIR_MAX      = 0.6f;  // 头部头发最大摆动
+    const float CIRCLE_BRAID_FROM_VEL   = 1.0f;   // 辫子（后发a/b/c/d）— 40%原幅
+    const float CIRCLE_BRAID_MAX         = 2.4f;   // 辫子最大摆动
+    const float CIRCLE_ORNAMENT_FROM_VEL = 1.0f;   // 饰品（发簪/头饰）— 40%原幅
+    const float CIRCLE_ORNAMENT_MAX      = 2.4f;   // 饰品最大摆动
+    const float CIRCLE_HEAD_ORNAMENT_FROM_VEL = 0.6f; // Param169 头饰 40%原幅
+    const float CIRCLE_HEAD_ORNAMENT_MAX      = 1.6f;
+    const float CIRCLE_CLOTH_FROM_VEL   = 2.0f;    // camX 速度→衣服倍数（原始不变）
+    const float CIRCLE_CLOTH_MAX         = 8.0f;    // 原始不变
     // ===================================================================
 
     // -- 走路（侧面视角）--
@@ -267,6 +270,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     private DragHandler _dragHandler;
     private ChatBubble _chatBubble;
     private TimeWeatherController _timeController;
+    private IdleChatGenerator _idleGen;
 
     // ===== 模型置顶（RenderTexture 叠层） =====
     private const int OVERLAY_LAYER = 31;            // 专用层
@@ -327,6 +331,16 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     private float _magicModeTimer = 0f;         // 模式切换计时
     private float _magicModeDuration = 0f;      // 当前模式持续时长
     private bool _magicModeBouncy = true;       // true=弹性惯性, false=柔软跟随
+    private float _magicPrevCamX = 0f;            // 上一帧 camX（速度计算用）
+    private float _magicHairSmooth = 0f;          // SmoothDamp 平滑后的速度值
+    private float _magicHairSmoothVel = 0f;       // SmoothDamp 速度引用
+    // ForceUpdateNow 后 Physics 会覆盖头发参数，存下计算值用于 ForceUpdate 后重新应用
+    private float _magicHeadHairV = 0f;
+    private float _magicBraidV = 0f;
+    private float _magicOrnamentV = 0f;
+    private float _magicHair169V = 0f;
+    private float _magicClothV = 0f;
+    private MaterialPropertyBlock _magicMpb;        // 缓存 MPB 用于每帧 ForceRefresh 防眼白
 
     // 随机微动用噪声偏移
     private float _noiseTimeX = 0f;
@@ -793,17 +807,17 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
         UpdateBlink();
 
-        // ★ 每帧强制清零眼睛白覆盖层和高光（防 Cubism 物理/表情预设覆盖）
-        //    法阵动作已在 UpdateMagicCircle() 中设置了这些值，此处是全局安全网
+        // ★ 每帧强制清零眼睛白覆盖层（防 Cubism 物理/表情预设覆盖）
+        //    Param63-71 是眼睛高光/光点层，设 1f 保留高光使眼睛有神
         SetParameter("Param132", 0f);
-        SetParameter("Param63", 0f);
-        SetParameter("Param64", 0f);
-        SetParameter("Param65", 0f);
-        SetParameter("Param67", 0f);
-        SetParameter("Param68", 0f);
-        SetParameter("Param69", 0f);
-        SetParameter("Param70", 0f);
-        SetParameter("Param71", 0f);
+        SetParameter("Param63", 1f);
+        SetParameter("Param64", 1f);
+        SetParameter("Param65", 1f);
+        SetParameter("Param67", 1f);
+        SetParameter("Param68", 1f);
+        SetParameter("Param69", 1f);
+        SetParameter("Param70", 1f);
+        SetParameter("Param71", 1f);
 
         // ★ 走路/空闲统一在 LateUpdate 中设置参数
         // 此时 _walkPhase 已在 Update() 中更新完毕，相位准确
@@ -811,7 +825,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
 
         if (isWalking)
         {
-            if (!_wasWalkingLastFrame)
+            if (!_wasWalkingLastFrame && !_actionLocked)
             {
                 // 空闲→走路：清表情残留 + 开始体态淡入
                 ResetIdleAction();
@@ -1045,22 +1059,80 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             _cubismModel.ForceUpdateNow();
         }
 
+        // ★ ForceUpdateNow 会触发 Cubism 更新管线，Physics 重新覆盖头发/衣服参数。
+        //    最后一次 ForceUpdate 后重新应用 + SaveParameters，确保最终值是我们设定的。
+        // ★ 无条件 _currentIdleAction==7（不依赖 _actionLocked），
+        //   自然触发（_actionLocked=false）时同样需要 ForceRefreshModelAfterFade 保护。
+        if (_currentIdleAction == 7)
+        {
+            // ★ 头部头发：10%原幅
+            SetParameter("Param5", _magicHeadHairV);  SetParameter("Param7", _magicHeadHairV);
+            SetParameter("Param9", _magicHeadHairV);  SetParameter("Param11", _magicHeadHairV);
+            SetParameter("Param14", _magicHeadHairV); SetParameter("Param17", _magicHeadHairV);
+            SetParameter("Param19", _magicHeadHairV); SetParameter("Param21", _magicHeadHairV);
+            SetParameter("Param23", _magicHeadHairV); SetParameter("Param35", _magicHeadHairV);
+            SetParameter("Param41", _magicHeadHairV);
+            // ★ 后发/辫子：40%原幅
+            SetParameter("Param43", _magicBraidV);    SetParameter("Param45", _magicBraidV);
+            SetParameter("Param55", _magicBraidV);    SetParameter("Param62", _magicBraidV);
+            // ★ 发饰品：40%原幅
+            SetParameter("Param91", _magicOrnamentV); SetParameter("Param74", _magicOrnamentV);
+            SetParameter("Param89", _magicOrnamentV);
+            // ★ Param169 头饰
+            SetParameter("Param169", _magicHair169V);
+            SetParameter("Param82", _magicClothV);  SetParameter("Param87", _magicClothV);
+            SetParameter("Param84", _magicClothV * 0.6f);
+            SetParameter("Param49", _magicClothV);  SetParameter("Param51", _magicClothV);
+            SetParameter("Param57", _magicClothV);  SetParameter("Param60", _magicClothV);
+            // 先保存参数再 ForceUpdate，让 RestoreParameters 恢复我们的值而非 Physics 覆盖值
+            if (_paramStore != null) _paramStore.SaveParameters();
+            _cubismModel.ForceUpdateNow();
+
+            // ★ ForceUpdateNow 触发了 Cubism 物理管线，Physics 重新计算了
+            //   ParamBodyAngleX/ParamAngleX，覆盖了 UpdateMagicCircle() 中设置的
+            //   Perlin+Spring 飘动偏移。此处重新应用身体角度。
+            //   从 UpdateMagicCircle() 计算出的 _magicSpringPosX/_magicSpringPosH
+            //   在弹簧物理中已更新，直接使用。
+            float angleFade = Mathf.Clamp01(_complexActionPhase / CIRCLE_ANGLE_RAMP_DUR);
+            float fadeMag = Mathf.Clamp01(_complexActionPhase / CIRCLE_DURATION);
+            if (fadeMag >= 1f)
+            {
+                // Act 3 消散段：用 fade 淡出（与 UpdateMagicCircle 逻辑一致）
+                float hAct3 = (fadeMag - 0.65f) / (1f - 0.65f);
+                float act3Fade = 1f - EaseOutQuad(hAct3);
+                float fadeBody = act3Fade * act3Fade;
+                SetParameter("ParamBodyAngleX", fadeBody * angleFade * (CIRCLE_BODY_ANGLE_X + _magicSpringPosX));
+                SetParameter("ParamAngleX", fadeBody * angleFade * (CIRCLE_HEAD_ANGLE_X + _magicSpringPosH));
+            }
+            else
+            {
+                SetParameter("ParamBodyAngleX", angleFade * (CIRCLE_BODY_ANGLE_X + _magicSpringPosX));
+                SetParameter("ParamAngleX", angleFade * (CIRCLE_HEAD_ANGLE_X + _magicSpringPosH));
+            }
+            SetParameter("ParamBodyAngleZ", 0);
+
+            // ★ ForceUpdateNow 后 CubismRenderController 可能重置了 GPU 的 MultiplyColor，
+            //   需要重新强制设置为白色，防止眼睛变暗。
+            ForceRefreshModelAfterFade();
+        }
+
         // ============================================================
-        // ★ ArtMesh 渲染层调试日志 — 记录所有非默认渲染状态的 Drawable
-        //    每 30 帧记录一次（即使 actionLocked 也要记录！）
+        // ★ ArtMesh 渲染层调试日志 — 仅在法阵激活时每 300 帧记录非默认颜色
+        //    ScreenColor.a 默认 = 1.0，用 a>0.01 判断会误匹配全部 ArtMesh
+        //    改为仅当 RGB 有颜色值时才记录（非纯透明 ScreenColor）
         // ============================================================
-        if (Time.frameCount % 30 == 0 && _cubismModel?.Drawables != null)
+        if (Time.frameCount % 300 == 0 && _actionLocked && _cubismModel?.Drawables != null)
         {
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
-            string prefix = _actionLocked ? "[EYE_MESH_LOCKED]" : "[EYE_MESH]";
             int count = 0;
             foreach (var drawable in _cubismModel.Drawables)
             {
                 var multColor = drawable.MultiplyColor;
                 var screenColor = drawable.ScreenColor;
-                // 记录任何 MultiplyColor 非白色或 ScreenColor 非透明的 ArtMesh
+                // 记录任何 MultiplyColor 非白色，或 ScreenColor 有色（r/g/b > 0.01）的 ArtMesh
+                // 注意：ScreenColor.a 默认为 1.0（全透明不叠加颜色），不能用作判断条件
                 if (multColor.r < 0.99f || multColor.g < 0.99f || multColor.b < 0.99f || multColor.a < 0.99f ||
-                    screenColor.r > 0.01f || screenColor.g > 0.01f || screenColor.b > 0.01f || screenColor.a > 0.01f)
+                    screenColor.r > 0.01f || screenColor.g > 0.01f || screenColor.b > 0.01f)
                 {
                     sb.Append($" [{drawable.name}](id={drawable.Id}) mul=({multColor.r:F2},{multColor.g:F2},{multColor.b:F2},{multColor.a:F2})" +
                         $" scr=({screenColor.r:F2},{screenColor.g:F2},{screenColor.b:F2},{screenColor.a:F2})");
@@ -1068,7 +1140,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
                 }
             }
             if (count > 0)
-                Debug.Log($"{prefix} found={count}:{sb.ToString()}");
+                Debug.Log($"[EYE_MESH] found={count}:{sb.ToString()}");
         }
 
         // ============================================================
@@ -1377,16 +1449,17 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             }
         }
 
-        // === 每帧强制清零眼睛白覆盖层和高光参数（防 Cubism 物理/默认值覆盖）===
+        // === 每帧强制清零眼睛白覆盖层（防 Cubism 物理/默认值覆盖）===
         SetParameter("Param132", 0f); // 白色覆盖层（使眼变白）
-        SetParameter("Param63", 0f);  // 高光R1
-        SetParameter("Param64", 0f);  // 高光R2
-        SetParameter("Param65", 0f);  // 光点R1
-        SetParameter("Param67", 0f);  // 高光L1
-        SetParameter("Param68", 0f);  // 高光L2
-        SetParameter("Param69", 0f);  // 光点R2
-        SetParameter("Param70", 0f);  // 光点L1
-        SetParameter("Param71", 0f);  // 光点L2
+        // Param63-71 是眼睛高光/光点层，设 1f 保留高光使眼睛有神
+        SetParameter("Param63", 1f);  // 高光R1
+        SetParameter("Param64", 1f);  // 高光R2
+        SetParameter("Param65", 1f);  // 光点R1
+        SetParameter("Param67", 1f);  // 高光L1
+        SetParameter("Param68", 1f);  // 高光L2
+        SetParameter("Param69", 1f);  // 光点R2
+        SetParameter("Param70", 1f);  // 光点L1
+        SetParameter("Param71", 1f);  // 光点L2
 
         // === 空闲动作：加权随机选取（权重越高越容易出现）===
         // 动作: 1=歪头, 2=微笑, 3=挑眉, 4=星辉, 5=伸懒腰, 6=委屈, 7=法阵, 8=害羞
@@ -1434,7 +1507,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         float duration = 2f;
         float t = Mathf.Sin(_idleActionTime / duration * Mathf.PI);
         SetParameter("ParamAngleZ", t * IDLE_TILT);
-        if (_idleActionTime >= duration) ResetIdleAction();
+        if (_idleActionTime >= duration) ResetIdleAction(true);
     }
 
     /// <summary>动作2: 微笑 — 眯眼微笑</summary>
@@ -1445,7 +1518,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("ParamEyeLSmile", t * IDLE_SMILE);
         SetParameter("ParamEyeRSmile", t * IDLE_SMILE);
         SetParameter("ParamMouthForm", t * IDLE_MOUTH);
-        if (_idleActionTime >= duration) ResetIdleAction();
+        if (_idleActionTime >= duration) ResetIdleAction(true);
     }
 
     /// <summary>动作3: 挑眉 — 眉毛微动</summary>
@@ -1455,7 +1528,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         float t = Mathf.Sin(_idleActionTime / duration * Mathf.PI);
         SetParameter("ParamBrowRY", t * IDLE_BROW_Y);
         SetParameter("ParamBrowLY", t * IDLE_BROW_Y);
-        if (_idleActionTime >= duration) ResetIdleAction();
+        if (_idleActionTime >= duration) ResetIdleAction(true);
     }
 
     /// <summary>
@@ -1469,7 +1542,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         float duration = SPIN_DURATION; // 6f
         float t = Mathf.Clamp01(p / duration);
 
-        if (t >= 1f) { ResetIdleAction(); return; }
+        if (t >= 1f) { ResetIdleAction(true); return; }
 
         // === 阶段边界（秒） ===
         const float P1 = 0.8f;   // Phase1: 星现·抬头
@@ -1760,7 +1833,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("ParamBreath", phase * 0.5f); // 深吸一口气
 
         // 结束恢复
-        if (t >= 1f) ResetIdleAction();
+        if (t >= 1f) ResetIdleAction(true);
     }
 
     /// <summary>
@@ -1801,7 +1874,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("ParamBodyAngleX", sob);
         SetParameter("ParamBodyAngleZ", sob * 0.5f);
 
-        if (t >= 1f) ResetIdleAction();
+        if (t >= 1f) ResetIdleAction(true);
     }
 
     /// <summary>
@@ -1840,7 +1913,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         // 嘴巴微张（欲言又止）
         SetParameter("ParamMouthForm", eased * 0.3f);
 
-        if (t >= 1f) ResetIdleAction();
+        if (t >= 1f) ResetIdleAction(true);
     }
 
     /// <summary>
@@ -1876,7 +1949,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         // 身体微侧
         SetParameter("ParamBodyAngleZ", eased * CONFUSE_BODY_SIDE);
 
-        if (t >= 1f) ResetIdleAction();
+        if (t >= 1f) ResetIdleAction(true);
     }
 
     /// <summary>
@@ -1884,7 +1957,7 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     /// 五阶段：举过头顶→剑指成型→指尖凝光→扩散至全屏→消散
     /// 视觉特效包括：黑幕淡入、镜头推近、紫环旋转、白圈扩散、星星闪烁、眼镜发光
     /// </summary>
-    // ★ Ease 辅助函数
+    // Ease 辅助函数
     private float EaseOutQuad(float x) { return 1f - (1f - x) * (1f - x); }
     private float EaseInQuad(float x) { return x * x; }
     private float EaseInCubic(float x) { return x * x * x; }
@@ -1895,6 +1968,10 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         float duration = CIRCLE_DURATION;
         float t = Mathf.Clamp01(p / duration);
 
+        // ★ 每帧强制重置 GPU MultiplyColor，防 CubismRenderController（order 10000）
+        //   在上一帧写回的非白色 SharedPropertyBlock 覆盖 ArtMesh 眼色。
+        ForceRefreshModelAfterFade();
+
         // ===== 身体姿态（全阶段 + 物理飘动） =====
         // 弹簧初始化
         if (p == 0f)
@@ -1903,6 +1980,9 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             _magicSpringPosH = 0f; _magicSpringVelH = 0f;
             _magicFloatPhase = 0f;
             _magicModeTimer = 0f;
+            _magicPrevCamX = 0f;
+            _magicHairSmooth = 0f;
+            _magicHairSmoothVel = 0f;
             _magicModeDuration = Random.Range(2f, 5f);
             _magicModeBouncy = Random.value > 0.5f;
             _magicDamping = _magicModeBouncy ? CIRCLE_SPRING_DAMP_BOUNCE : CIRCLE_SPRING_DAMP_SOFT;
@@ -1920,34 +2000,32 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             _magicDamping = _magicModeBouncy ? CIRCLE_SPRING_DAMP_BOUNCE : CIRCLE_SPRING_DAMP_SOFT;
         }
 
+        // ★ 弹簧力也随 angleFade 渐入，防止在隐藏期积累动量后突然弹出
+        float angleFade = Mathf.Clamp01(p / CIRCLE_ANGLE_RAMP_DUR);
+        float springFade = angleFade * angleFade; // 二次曲线：弹簧更慢建立
         float targetX = (Mathf.PerlinNoise(_magicFloatPhase, 0f) - 0.5f) * CIRCLE_FLOAT_AMPLITUDE_BODY;
         float targetH = (Mathf.PerlinNoise(_magicFloatPhase, 1f) - 0.5f) * CIRCLE_FLOAT_AMPLITUDE_HEAD;
-        float forceX = CIRCLE_SPRING_STIFF * (targetX - _magicSpringPosX) - _magicDamping * _magicSpringVelX;
+        float forceX = springFade * (CIRCLE_SPRING_STIFF * (targetX - _magicSpringPosX) - _magicDamping * _magicSpringVelX);
         _magicSpringVelX += forceX * mdt;
         _magicSpringPosX += _magicSpringVelX * mdt;
-        float forceH = CIRCLE_SPRING_STIFF * (targetH - _magicSpringPosH) - _magicDamping * _magicSpringVelH;
+        float forceH = springFade * (CIRCLE_SPRING_STIFF * (targetH - _magicSpringPosH) - _magicDamping * _magicSpringVelH);
         _magicSpringVelH += forceH * mdt;
         _magicSpringPosH += _magicSpringVelH * mdt;
 
-        // ★ 角度渐入，防止起始帧突变弹飞头发
-        float angleFade = Mathf.Clamp01(p / CIRCLE_ANGLE_RAMP_DUR);
+        // 角度渐入（续：angleFade 在上面已计算）
+
         SetParameter("ParamBodyAngleX", angleFade * (CIRCLE_BODY_ANGLE_X + _magicSpringPosX));
         SetParameter("ParamAngleX", angleFade * (CIRCLE_HEAD_ANGLE_X + _magicSpringPosH));
         SetParameter("ParamBodyAngleZ", 0);
 
-        // ===== 手部图层优先级（Phase1-4 保持最前，不被衣服挡住） =====
-        if (t < 0.75f) SetHandLayer(1f);
-
-        // ★ Param92 全程保持剑指模式（不随h渐消，防10指重叠）
-        SetParameter("Param92", 1f);
-
-        // ===== 视觉特效 =====
-        // Phase 边界
-        const float P1 = 0.20f;  // 举过头顶
-        const float P2 = 0.45f;  // 剑指成型
-        const float P3 = 0.50f;  // 指尖凝光
-        const float P4 = 0.75f;  // 扩散至全屏
-        // P5 = 1.00f 消散
+        // ===== 视觉特效 — 三幕结构 =====
+        // Act 1 (t=0→0.40): 斜上升 — 手举过头顶→剑指成型，镜头推近到最大值
+        // Act 2 (t=0.40→0.65): 悬停亮阵 — 镜头固定最远，全屏爆发，法阵峰值
+        // Act 3 (t=0.65→1.0): 回正消散 — 镜头回正，一切渐消
+        const float P1 = 0.20f;  // Act1: 举过头顶
+        const float P2 = 0.40f;  // Act1: 剑指成型到达最高点
+        const float P3 = 0.65f;  // Act2: 悬停结束 → Act3 开始
+        // P4 = 1.00f 消散完毕
 
         // 星星
         float starVis = 0f, starSize = 0f, outerScale = 0f, outerAppear = 0f;
@@ -1966,23 +2044,24 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         float camX = 0f, camY = 0f, charScale = 1f;
 
         // 眼镜发光
-        float eyeGlow = 0f;
         float eyeOpen = 1f; // 睁眼幅度（>1=睁大，瞳孔露出更多→更亮）
 
-        // ---- Phase1: 举过头顶 ----
+        // ==== Act 1: 斜上升 (t=0→0.40) ====
+        // ---- P1: 举过头顶（手势淡入）----
         if (t < P1)
         {
             float h = EaseInCubic(t / P1);
 
-            // 手势
             SetHandPose(h);
             SetSwordFinger(h);
+            SetHandLayer(h);
+            SetParameter("Param92", h);
 
             // 星星淡入
             starVis = h;
             starSize = h * 0.3f;
 
-            // 黑幕淡入（仅本体周围）
+            // 黑幕淡入
             darkScreen = h * 0.08f;
             darkAppear = h * 0.05f;
 
@@ -1991,14 +2070,16 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             camX = h * 2f;
             camY = h * 1f;
         }
-        // ---- Phase2: 剑指成型 ----
+        // ---- P2: 剑指成型→举到最高 ----
         else if (t < P2)
         {
-            float h = (t - P1) / (P2 - P1); // 0→1
+            float h = (t - P1) / (P2 - P1);
             float eased = EaseOutQuad(h);
 
             SetHandPose(1f);
             SetSwordFinger(1f);
+            SetHandLayer(1f);
+            SetParameter("Param92", 1f);
 
             // 星星全亮
             starVis = 1f;
@@ -2017,160 +2098,126 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             ringMidSize = 1f + eased * 0.3f;
             ringInnerSize = 1f + eased * 0.2f;
 
-            // 黑幕继续加深（仅本体周围）
+            // 黑幕加深
             darkScreen = 0.08f + eased * 0.12f;
             darkAppear = 0.05f + eased * 0.08f;
 
-            // 镜头推近
-            charScale = 1.08f + eased * 0.12f;
-            camX = 2f + eased * 3f;
-            camY = 1f + eased * 2f;
-
-            // 眼镜微亮（保持正常睁眼，不自发光避免泛白）
-            eyeGlow = eased * 0.06f;
-            eyeOpen = 1f; // 正常睁眼
+            // 镜头推近到最大
+            charScale = 1.08f + eased * 0.27f;
+            camX = 2f + eased * 6f;
+            camY = 1f + eased * 4f;
         }
-        // ---- Phase3: 指尖凝光 ----
+        // ==== Act 2: 悬停亮阵 (t=0.40→0.65) ====
         else if (t < P3)
         {
-            float h = (t - P2) / (P3 - P2);
-
-            SetHandPose(1f);
-            SetSwordFinger(1f);
-
-            // 星星峰值
-            starVis = 1f;
-            starSize = 0.8f + h * 0.3f;
-            outerScale = 0.6f + h * 0.4f;
-            outerAppear = 0.5f + h * 0.5f;
-
-            // 紫环急速旋转
-            float spin = 1f + h * 3f;
-            ringOuterVis = 1f;
-            ringMidVis = 0.7f + h * 0.3f;
-            ringInnerVis = 0.4f + h * 0.2f;
-            ringOuterRot = 30f + spin * 60f;
-            ringMidRot = 45f + spin * 90f;
-            ringInnerRot = 60f + spin * 120f;
-            ringOuterSize = 1.5f + h * 0.3f;
-            ringMidSize = 1.3f + h * 0.3f;
-            ringInnerSize = 1.2f + h * 0.2f;
-
-            // 黑幕最深（仅本体周围）
-            darkScreen = 0.20f + h * 0.05f;
-            darkAppear = 0.13f + h * 0.05f;
-
-            // 镜头最推近
-            charScale = 1.2f + h * 0.15f;
-            camX = 5f + h * 3f;
-            camY = 3f + h * 2f;
-
-            // 眼镜微亮峰值（极低暖光，不泛白）
-            eyeGlow = 0.03f;
-            eyeOpen = 1f; // 正常睁眼
-
-            // 白圈开始出现（仅本体）
-            whiteCircle = h * 0.08f;
-            whiteCircleSize = h * 0.05f;
-        }
-        // ---- Phase4: 扩散至全屏 ----
-        else if (t < P4)
-        {
-            float h = (t - P3) / (P4 - P3);
+            float h = (t - P2) / (P3 - P2); // 0→1
             float eased = EaseOutQuad(h);
 
-            float handFade = 1f - EaseOutQuad(h);
-            SetHandPose(handFade);
-            SetSwordFinger(handFade);
+            // 手势保持在最高位
+            SetHandPose(1f);
+            SetSwordFinger(1f);
+            SetHandLayer(1f);
+            SetParameter("Param92", 1f);
 
-            // 星星渐退→七星盘
-            starVis = 1f - eased * 0.5f;
-            starSize = 1.1f * (1f - eased * 0.3f);
-            outerScale = 1f * (1f - eased);
-            outerAppear = 1f * (1f - eased);
+            // 镜头固定在最远位置（不变）
+            charScale = 1.35f;
+            camX = 8f;
+            camY = 5f;
 
-            // 紫环渐收
-            ringOuterVis = 1f * (1f - eased);
-            ringMidVis = 1f * (1f - eased * 0.5f);
-            ringInnerVis = 0.6f * (1f - eased * 0.3f);
-            ringOuterRot = 90f + eased * 60f;
-            ringMidRot = 135f + eased * 90f;
-            ringInnerRot = 180f + eased * 120f;
-            ringOuterSize = 1.8f + eased * 2f;  // 扩散
-            ringMidSize = 1.6f + eased * 1.5f;
-            ringInnerSize = 1.4f + eased * 1f;
+            // 星星：前1/3淡出星星→七星盘，后2/3最大
+            if (h < 0.33f)
+            {
+                float s = h / 0.33f;
+                starVis = 1f - s * 0.5f;
+                starSize = 0.8f - s * 0.03f;
+                outerScale = 1f * (1f - s);
+                outerAppear = 1f * (1f - s);
+            }
+            else
+            {
+                starVis = 0.5f;
+                starSize = 0.77f;
+                outerScale = 0f;
+                outerAppear = 0f;
+            }
 
-            // 黑幕维持（仅本体周围）
+            // 紫环：加速旋转到峰值转速（全屏爆发）
+            ringOuterVis = 1f;
+            ringMidVis = Mathf.Lerp(0.7f, 1f, eased);
+            ringInnerVis = Mathf.Lerp(0.4f, 0.6f, eased);
+            ringOuterRot = 30f + eased * 120f;
+            ringMidRot = 45f + eased * 180f;
+            ringInnerRot = 60f + eased * 240f;
+            ringOuterSize = 1.5f + eased * 2.3f; // 扩散
+            ringMidSize = 1.3f + eased * 2.0f;
+            ringInnerSize = 1.2f + eased * 1.5f;
+
+            // 黑幕维持最深
             darkScreen = 0.25f;
-            darkAppear = 0.18f - eased * 0.05f;
+            darkAppear = 0.13f;
 
-            // 镜头回正
-            charScale = 1.35f * (1f - eased * 0.35f);
-            camX = 8f * (1f - eased);
-            camY = 5f * (1f - eased);
-
-            // 眼镜微亮渐消（Phase5 start=0，不回弹）
-            eyeGlow = 0f;
-            eyeOpen = 1f; // 保持正常睁眼
-
-            // 白圈扩散（仅本体周围）
-            whiteCircle = 0.08f + eased * 0.12f;
-            whiteCircleSize = 0.05f + eased * 0.20f;
-            whiteX = eased * 0.4f;
-            whiteY = eased * 0.3f;
+            // 白圈全屏展开
+            whiteCircle = 0.08f + eased * 0.17f;
+            whiteCircleSize = 0.05f + eased * 0.30f;
+            whiteX = eased * 0.5f;
+            whiteY = eased * 0.4f;
         }
-        // ---- Phase5: 消散（已修正 Phase4→Phase5 连续性）----
+        // ==== Act 3: 回正消散 (t=0.65→1.0) ====
         else
         {
-            float phase5 = (t - 0.75f) / 0.25f;
-            float fade = 1f - EaseOutQuad(phase5); // 1→0
+            float h = (t - P3) / (1f - P3); // 0→1
+            float fade = 1f - EaseOutQuad(h); // 1→0
 
-            // 身体淡出（飘动也随 fade 消退）
-            float phase5AngleFade = Mathf.Clamp01(p / CIRCLE_ANGLE_RAMP_DUR); // 参考渐入
-            SetParameter("ParamBodyAngleX", fade * phase5AngleFade * (CIRCLE_BODY_ANGLE_X + _magicSpringPosX));
-            SetParameter("ParamAngleX", fade * phase5AngleFade * (CIRCLE_HEAD_ANGLE_X + _magicSpringPosH));
-            SetHandLayer(fade);
-            SetParameter("Param92", fade);
-            SetHandPose(fade);
-            SetSwordFinger(fade);
+            // 手脚渐收
+            float handFade = 1f - h;
+            SetHandPose(handFade);
+            SetSwordFinger(handFade);
+            SetHandLayer(handFade);
+            SetParameter("Param92", handFade);
 
-            // 星星从 Phase4 终值渐消
+            // 身体角度消退
+            float fadeBody = fade * fade;
+            SetParameter("ParamBodyAngleX", fadeBody * angleFade * (CIRCLE_BODY_ANGLE_X + _magicSpringPosX));
+            SetParameter("ParamAngleX", fadeBody * angleFade * (CIRCLE_HEAD_ANGLE_X + _magicSpringPosH));
+
+            // 星星渐消
             starVis = fade * 0.5f;
-            starSize = fade * 0.77f; // Phase4 终值 0.77，平滑过渡
+            starSize = fade * 0.77f;
             outerScale = 0f;
             outerAppear = 0f;
 
-            // 紫环从 Phase4 终值渐消（外环已隐，中/内环渐消）
-            ringOuterVis = 0f;          // Phase4 终值=0，保持隐藏
-            ringMidVis = fade * 0.5f;   // Phase4 终值=0.5
-            ringInnerVis = fade * 0.42f; // Phase4 终值=0.42
-            ringOuterSize = 3.8f + (1f - fade) * 2f;
-            ringMidSize = 3.1f + (1f - fade) * 1.5f;
-            ringInnerSize = 2.4f + (1f - fade) * 1f;
-            ringOuterRot = 150f;        // 保持 Phase4 终值
-            ringMidRot = 225f;
-            ringInnerRot = 300f;
+            // 紫环渐消
+            ringOuterVis = 1f - h;
+            ringMidVis = (1f - h * 0.7f);
+            ringInnerVis = (1f - h * 0.5f);
+            ringOuterSize = 3.8f + h * 2f;
+            ringMidSize = 3.3f + h * 1.5f;
+            ringInnerSize = 2.7f + h * 1f;
+            ringOuterRot = 150f + h * 60f;
+            ringMidRot = 225f + h * 90f;
+            ringInnerRot = 300f + h * 120f;
 
             // 黑幕渐消
             darkScreen = fade * 0.25f;
-            darkAppear = fade * 0.13f;  // Phase4 终值=0.13
+            darkAppear = fade * 0.13f;
 
             // 白圈渐消
-            whiteCircle = fade * 0.20f; // Phase4 终值=0.20
-            whiteCircleSize = 0.25f + (1f - fade) * 0.5f;
-            whiteX = fade * 0.4f;
-            whiteY = fade * 0.3f;
+            whiteCircle = fade * 0.25f;
+            whiteCircleSize = 0.35f + h * 0.3f;
+            whiteX = fade * 0.5f;
+            whiteY = fade * 0.4f;
 
-            // ★ 镜头无突跳：camX/camY 从 Phase4 终值(0,0)开始，不变
-            charScale = 0.8775f + (1f - fade) * 0.1225f; // 0.88→1.0
-            camX = 0f;
-            camY = 0f;
+            // 镜头回正（h=0时camX=8,fade=1; h=1时camX=0,fade=0）
+            charScale = 0.8775f + h * 0.1225f;
+            camX = 8f * fade;
+            camY = 5f * fade;
 
-            // 眼镜保持正常
-            eyeGlow = 0f;
-            eyeOpen = 1f;
-
-            if (t >= 1f) ResetIdleAction();
+            if (t >= 1f)
+            {
+                Debug.LogWarning($"[Live2DRenderer] ⚠ MagicCircle 结束: p={p:F4}, t={t:F4}, complexActionPhase={_complexActionPhase:F4}, dur={duration}\n"
+                    + new System.Diagnostics.StackTrace().ToString());
+                ResetIdleAction(true);
+            }
         }
 
         // ===== 应用视觉特效参数 =====
@@ -2206,36 +2253,58 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("Param156", camY); // 镜头Y
         SetParameter("Param157", charScale); // 人物缩小放大
 
-        // ===== camX 直接驱动头发/衣服（法阵全程持续运动） =====
-        float hairD = Mathf.Clamp(camX * CIRCLE_HAIR_SCALE, -CIRCLE_HAIR_MAX, CIRCLE_HAIR_MAX);
-        SetParameter("Param5", hairD);   SetParameter("Param7", hairD);   SetParameter("Param9", hairD);
-        SetParameter("Param11", hairD);  SetParameter("Param14", hairD);  SetParameter("Param17", hairD);
-        SetParameter("Param19", hairD);  SetParameter("Param21", hairD);
-        SetParameter("Param23", hairD);  SetParameter("Param35", hairD);  SetParameter("Param41", hairD);
-        SetParameter("Param43", hairD);  SetParameter("Param45", hairD);  SetParameter("Param55", hairD);
-        SetParameter("Param62", hairD);  SetParameter("Param91", hairD);  SetParameter("Param74", hairD);
-        SetParameter("Param89", hairD);
-        float hair169D = Mathf.Clamp(camX * CIRCLE_HAIR169_SCALE, -CIRCLE_HAIR169_MAX, CIRCLE_HAIR169_MAX);
-        SetParameter("Param169", hair169D);
-        float clothD = Mathf.Clamp(camX * CIRCLE_CLOTH_SCALE, -CIRCLE_CLOTH_MAX, CIRCLE_CLOTH_MAX);
-        SetParameter("Param82", clothD);  SetParameter("Param87", clothD);
-        SetParameter("Param84", clothD * 0.6f);
-        SetParameter("Param49", clothD);  SetParameter("Param51", clothD);
-        SetParameter("Param57", clothD);  SetParameter("Param60", clothD);
+        // ===== camX 速度驱动头发/衣服/配饰（反向拖拽）=====
+        // 取 camX 每帧变化量 → 瞬时速度。移动时才有反向拖拽，
+        // 稳定时（即使在远端）速度=0 → 头发归零，始终保持中间态。
+        float dt = Time.deltaTime;
+        float camVel = (dt > 0f) ? (camX - _magicPrevCamX) / dt : 0f;
+        _magicPrevCamX = camX;
+        _magicHairSmooth = Mathf.SmoothDamp(_magicHairSmooth, camVel, ref _magicHairSmoothVel, CIRCLE_HAIR_SMOOTH);
+        float smoothVel = _magicHairSmooth; // 平滑后的速度，正=向右移
+        float headHairV = Mathf.Clamp(-smoothVel * CIRCLE_HEAD_HAIR_FROM_VEL, -CIRCLE_HEAD_HAIR_MAX, CIRCLE_HEAD_HAIR_MAX);
+        float braidV    = Mathf.Clamp(-smoothVel * CIRCLE_BRAID_FROM_VEL, -CIRCLE_BRAID_MAX, CIRCLE_BRAID_MAX);
+        float ornamentV = Mathf.Clamp(-smoothVel * CIRCLE_ORNAMENT_FROM_VEL, -CIRCLE_ORNAMENT_MAX, CIRCLE_ORNAMENT_MAX);
+        float hair169V  = Mathf.Clamp(-smoothVel * CIRCLE_HEAD_ORNAMENT_FROM_VEL, -CIRCLE_HEAD_ORNAMENT_MAX, CIRCLE_HEAD_ORNAMENT_MAX);
+        // ★ 头部头发（刘海/头发物理2/鬓发/后短发）：10%原幅
+        SetParameter("Param5", headHairV);  SetParameter("Param7", headHairV);
+        SetParameter("Param9", headHairV);  SetParameter("Param11", headHairV);
+        SetParameter("Param14", headHairV); SetParameter("Param17", headHairV);
+        SetParameter("Param19", headHairV); SetParameter("Param21", headHairV);
+        SetParameter("Param23", headHairV); SetParameter("Param35", headHairV);
+        SetParameter("Param41", headHairV);
+        // ★ 后发/辫子（后发a/b/c/d）：40%原幅
+        SetParameter("Param43", braidV);    SetParameter("Param45", braidV);
+        SetParameter("Param55", braidV);    SetParameter("Param62", braidV);
+        // ★ 发饰品（发簪/发饰）：40%原幅
+        SetParameter("Param91", ornamentV); SetParameter("Param74", ornamentV);
+        SetParameter("Param89", ornamentV);
+        // ★ Param169 头饰：40%原幅
+        SetParameter("Param169", hair169V);
+        float clothV = Mathf.Clamp(-smoothVel * CIRCLE_CLOTH_FROM_VEL, -CIRCLE_CLOTH_MAX, CIRCLE_CLOTH_MAX);
+        SetParameter("Param82", clothV);  SetParameter("Param87", clothV);
+        SetParameter("Param84", clothV * 0.6f);
+        SetParameter("Param49", clothV);  SetParameter("Param51", clothV);
+        SetParameter("Param57", clothV);  SetParameter("Param60", clothV);
+        // ★ 保存计算值供 ForceUpdateNow 后重新应用（Physics 会覆盖头发参数）
+        _magicHeadHairV = headHairV;
+        _magicBraidV = braidV;
+        _magicOrnamentV = ornamentV;
+        _magicHair169V = hair169V;
+        _magicClothV = clothV;
 
-        // 眼睛——用适度睁大瞳孔（自然亮，不泛白）
+        // 眼睛——正常睁眼，不泛白
         // ★ Param132="白色覆盖层（使眼变白）"，非零即显白，法阵全程保持 0
         SetParameter("Param132", 0f);
-        // Param63-71 是高光/光点层，设零保留默认高光，不额外发白
-        SetParameter("Param63", 0f);
-        SetParameter("Param64", 0f);
-        SetParameter("Param65", 0f);
-        SetParameter("Param67", 0f);
-        SetParameter("Param68", 0f);
-        SetParameter("Param69", 0f);
-        SetParameter("Param70", 0f);
-        SetParameter("Param71", 0f);
-        // ★ 适度睁大瞳孔（露出瞳孔颜色）+ 暖光，自然亮不泛白
+        // Param63-71 是眼睛高光/光点层，设 1f 保留高光使眼睛有神
+        SetParameter("Param63", 1f);
+        SetParameter("Param64", 1f);
+        SetParameter("Param65", 1f);
+        SetParameter("Param67", 1f);
+        SetParameter("Param68", 1f);
+        SetParameter("Param69", 1f);
+        SetParameter("Param70", 1f);
+        SetParameter("Param71", 1f);
+        // ★ 适度睁大瞳孔（露出瞳孔颜色），自然亮不泛白
         SetParameter("ParamEyeLOpen", eyeOpen);
         SetParameter("ParamEyeROpen", eyeOpen);
     }
@@ -2277,17 +2346,17 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("Param37", 0f);
     }
 
-    /// <summary>设置手部透视/图层（独立于姿势，始终在最上层）</summary>
+    /// <summary>设置手部透视/图层（不最高，让手自然融入身体）</summary>
     private void SetHandLayer(float layer)
     {
-        SetParameter("Param95", layer * 1f);
-        SetParameter("Param117", layer * 0.8f);
-        SetParameter("Param98", layer * 0.8f);
-        SetParameter("Param100", layer * 0.8f);
-        SetParameter("Param116", layer * 0.6f);
-        SetParameter("Param120", layer * 1f);
-        SetParameter("Param108", layer * 1f);
-        SetParameter("Param119", layer * 1f);
+        SetParameter("Param95", layer * 0.6f);
+        SetParameter("Param117", layer * 0.5f);
+        SetParameter("Param98", layer * 0.5f);
+        SetParameter("Param100", layer * 0.5f);
+        SetParameter("Param116", layer * 0.4f);
+        SetParameter("Param120", layer * 0.6f);
+        SetParameter("Param108", layer * 0.6f);
+        SetParameter("Param119", layer * 0.6f);
     }
 
     // ================================================================
@@ -2339,8 +2408,26 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
     }
 
     /// <summary>重置空闲动作，清理参数</summary>
-    private void ResetIdleAction()
+    /// <param name="force">true=强制重置（动作自然完成时用，跳过 _actionLocked 守卫）</param>
+    private void ResetIdleAction(bool force = false)
     {
+        // 🛡️ 防御性守卫：强制动作锁定期间禁止重置
+        //     防止某个尚未确定的代码路径在强制动作（如法阵#7）播放期间
+        //     意外调用 ResetIdleAction()，导致动作提前终止。
+        // ✅ force=true 时跳过守卫（动作自然结束时的合法清理）
+        if (_actionLocked && !force)
+        {
+            Debug.LogWarning("[Live2DRenderer] 🛡️ ResetIdleAction 被阻断: _actionLocked=" + _actionLocked
+                + ", _currentIdleAction=" + _currentIdleAction
+                + "\n" + new System.Diagnostics.StackTrace().ToString());
+            return;
+        }
+
+        // ★ 恢复 OverrideFlag，让 CubismRenderController 重新控制 MultiplyColor
+        //    ForceRefreshModelAfterFade() 设了 OverrideFlag=true 防止法阵期间覆盖，
+        //    动作结束后必须恢复，否则表情/预设再也无法改变 ArtMesh 颜色 → 眼白发白。
+        TryRestoreOverrideFlag();
+
         // ★ 保存当前动作ID（在清零前），用于特殊冷却判断
         int prevAction = _currentIdleAction;
 
@@ -2429,19 +2516,35 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         SetParameter("Param134", 0f); // 白圈位移x
         SetParameter("Param135", 0f); // 白圈位移y
         SetParameter("Param132", 0f); // 眼镜发光（白色覆盖层）
-        // 眼睛高光/光点参数归零
-        SetParameter("Param63", 0f); // 高光R1
-        SetParameter("Param64", 0f); // 高光R2
-        SetParameter("Param67", 0f); // 高光L1
-        SetParameter("Param68", 0f); // 高光L2
-        SetParameter("Param65", 0f); // 光点R1
-        SetParameter("Param69", 0f); // 光点R2
-        SetParameter("Param70", 0f); // 光点L1
-        SetParameter("Param71", 0f); // 光点L2
+        // Param63-71 是眼睛高光/光点层，设 1f 保留高光使眼睛有神
+        SetParameter("Param63", 1f); // 高光R1
+        SetParameter("Param64", 1f); // 高光R2
+        SetParameter("Param67", 1f); // 高光L1
+        SetParameter("Param68", 1f); // 高光L2
+        SetParameter("Param65", 1f); // 光点R1
+        SetParameter("Param69", 1f); // 光点R2
+        SetParameter("Param70", 1f); // 光点L1
+        SetParameter("Param71", 1f); // 光点L2
+
+        // ★ 法阵结束时恢复 Cubism OverrideFlag，让表情等能正常修改 MultiplyColor
+        if (_cubismModel != null)
+        {
+            var renderController = _cubismModel.GetComponent<CubismRenderController>();
+            if (renderController?.Renderers != null)
+            {
+                foreach (var renderer in renderController.Renderers)
+                {
+                    renderer.OverrideFlagForDrawableMultiplyColors = false;
+                    renderer.OverrideFlagForDrawableScreenColors = false;
+                }
+            }
+            _cubismModel.ForceUpdateNow();
+        }
 
         if (wasLocked)
         {
-            Debug.Log("[Live2DRenderer] 强制动作完成，触发回调");
+            Debug.LogWarning("[Live2DRenderer] 强制动作完成，触发回调\n"
+                + new System.Diagnostics.StackTrace().ToString());
             OnForcedActionFinished?.Invoke();
         }
     }
@@ -2458,6 +2561,21 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         _currentIdleAction = actionId;
         _idleActionTime = 0f;
         _complexActionPhase = 0f;
+
+        // ★ 法阵（actionId=7）：初始化弹簧飘动状态，确保 Perlin+Spring 在第一帧生效
+        if (actionId == 7)
+        {
+            _magicSpringPosX = 0f; _magicSpringVelX = 0f;
+            _magicSpringPosH = 0f; _magicSpringVelH = 0f;
+            _magicFloatPhase = Random.Range(0f, 100f); // ✓ 随机种子，确保 Perlin 产生变化
+            _magicModeTimer = 0f;
+            _magicPrevCamX = 0f;
+            _magicHairSmooth = 0f;
+            _magicHairSmoothVel = 0f;
+            _magicModeDuration = Random.Range(2f, 5f);
+            _magicModeBouncy = Random.value > 0.5f;
+            _magicDamping = _magicModeBouncy ? CIRCLE_SPRING_DAMP_BOUNCE : CIRCLE_SPRING_DAMP_SOFT;
+        }
 
         // ★ 强制动作时，清理可能冲突的调试偏移，防止偏移覆盖动画
         if (debugOffsetEnabled && debugOffsets != null && debugOffsets.Count > 0)
@@ -2897,17 +3015,45 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         var renderController = _cubismModel.GetComponent<CubismRenderController>();
         if (renderController?.Renderers == null) return;
 
-        // 用本地 MaterialPropertyBlock 实例，避免干扰 Cubism 的静态 SharedPropertyBlock
-        var mpb = new MaterialPropertyBlock();
+        // 缓存 MPB，避免每帧 new 产生 GC
+        if (_magicMpb == null)
+            _magicMpb = new MaterialPropertyBlock();
+
+        // 用本地 MPB 覆盖所有 Renderer，不受 Cubism SharedPropertyBlock 影响。
+        // 同时设置 OverrideFlag + LastMultiplyColor，阻止 CubismRenderController
+        // 在 OnLateUpdate (order 10000) 中用非白色的模型数据写回 GPU。
         foreach (var renderer in renderController.Renderers)
         {
-            renderer.MeshRenderer.GetPropertyBlock(mpb);
-            mpb.SetColor("cubism_MultiplyColor", Color.white);
-            mpb.SetColor("cubism_ScreenColor", Color.clear);
-            renderer.MeshRenderer.SetPropertyBlock(mpb);
+            renderer.OverrideFlagForDrawableMultiplyColors = true;
+            renderer.OverrideFlagForDrawableScreenColors = true;
+            renderer.MultiplyColor = Color.white;
+            renderer.LastMultiplyColor = Color.white;
+            renderer.LastIsUseUserMultiplyColor = true;
+            renderer.ScreenColor = Color.clear;
+            renderer.LastScreenColor = Color.clear;
+            renderer.LastIsUseUserScreenColors = true;
+            renderer.MeshRenderer.GetPropertyBlock(_magicMpb);
+            _magicMpb.SetColor("cubism_MultiplyColor", Color.white);
+            _magicMpb.SetColor("cubism_ScreenColor", Color.clear);
+            renderer.MeshRenderer.SetPropertyBlock(_magicMpb);
         }
+    }
 
-        Debug.Log("[Live2DRenderer] ✓ 表情停止后强制 GPU 恢复白色混合颜色");
+    /// <summary>
+    /// 恢复 OverrideFlag，让 CubismRenderController 重新控制 MultiplyColor/ScreenColor。
+    /// 法阵/动作期间 ForceRefreshModelAfterFade() 设了这些 flag，
+    /// 结束后必须恢复，否则表情系统再也无法改变 ArtMesh 颜色 → 眼睛发白/颜色固化。
+    /// </summary>
+    private void TryRestoreOverrideFlag()
+    {
+        if (_cubismModel == null) return;
+        var renderController = _cubismModel.GetComponent<CubismRenderController>();
+        if (renderController?.Renderers == null) return;
+        foreach (var renderer in renderController.Renderers)
+        {
+            renderer.OverrideFlagForDrawableMultiplyColors = false;
+            renderer.OverrideFlagForDrawableScreenColors = false;
+        }
     }
 
     /// <summary>播放复合动作</summary>
@@ -2944,9 +3090,10 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
             // ★ 动作完毕重置所有动作参数（含 Param132 等眼睛白色覆盖层），
             //   防止 ActionPreset 残留的值导致眼睛发白
             ResetIdleAction();
-            // ★ 强制刷新 GPU 混合颜色，解决动作结束后 ArtMesh 保持暗色的问题
+            // ★ 强制刷新网格，让 Cubism 用模型自身数据重算 ArtMesh 颜色
+            //   不要调 ForceRefreshModelAfterFade() — 它会把 OverrideFlag=true 固化所有 Drawable 为白色，
+            //   导致表情/预设再也无法控制 MultiplyColor，眼睛发白。
             if (_cubismModel != null) _cubismModel.ForceUpdateNow();
-            ForceRefreshModelAfterFade();
             // ★ 恢复宠物物理
             if (_pet != null) _pet.Resume();
             OnForcedActionFinished?.Invoke();
@@ -2979,7 +3126,8 @@ public class Live2DRenderer : MonoBehaviour, IPetRenderer
         // ★ 超时强制清理动作参数（含 Param132 眼睛白色覆盖层）
         ResetIdleAction();
         if (_cubismModel != null) _cubismModel.ForceUpdateNow();
-        ForceRefreshModelAfterFade();
+        // ★ 注意：不要调 ForceRefreshModelAfterFade()，它会把 OverrideFlag=true 固化，
+        //   导致表情系统再也无法控制 ArtMesh 颜色 → 眼睛发白。
         if (_pet != null && _pet.isPaused)
             _pet.Resume();
         // 通知调用方（ContextMenu 恢复宠物状态）

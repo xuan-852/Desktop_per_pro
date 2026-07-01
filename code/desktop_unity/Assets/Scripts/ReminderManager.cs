@@ -317,7 +317,8 @@ public class ReminderManager : MonoBehaviour
         // 4. 触发事件
         OnReminderDue?.Invoke(r);
 
-        // 5. 如果是每日/工作日重复，自动重置到明天
+        // 5. 如果是每日/工作日/每周重复，自动重置
+        //    否则（一次性提醒）自动标记完成，从待办中移除
         if (r.recurring == "daily")
         {
             r.remindAt = dtTomorrow(r.remindAt);
@@ -338,6 +339,13 @@ public class ReminderManager : MonoBehaviour
         {
             r.remindAt = DateTime.Parse(r.remindAt).AddDays(7).ToString("O");
             _triggeredIds.Remove(r.id);
+            Save();
+        }
+        else
+        {
+            // 一次性提醒 — 触发后自动勾销
+            r.done = true;
+            OnReminderDone?.Invoke(r.id);
             Save();
         }
 

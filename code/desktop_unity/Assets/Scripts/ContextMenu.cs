@@ -849,7 +849,8 @@ public class ContextMenu : MonoBehaviour
                     _pet.ForceStop();
                 _renderer.ForceAction(id);
 
-                // 关闭菜单
+                // ★ 关闭菜单（不调 Close() 以避免立即恢复运动）
+                //    动作期间保持 _pet.isPaused=true，等 OnForcedActionComplete 再恢复。
                 _isOpen = false;
 
                 _renderer.OnForcedActionFinished -= OnForcedActionComplete;

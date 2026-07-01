@@ -134,16 +134,10 @@ public class ChatBubble : MonoBehaviour
         _needsRebuild = true;
     }
 
-    /// <summary>仅更新文本和时长（不重置淡入动画）— 用于逐句切换</summary>
-    public void UpdateText(string text, float duration = 0f)
+    /// <summary>仅更新文本和尺寸（不重置淡入动画，不重置计时器）— 用于逐句切换</summary>
+    public void UpdateText(string text)
     {
         _currentText = text;
-        if (duration > 0f)
-        {
-            // 延长剩余显示时间
-            _messageStartTime = Time.time;
-            displayDuration = duration;
-        }
         _needsRebuild = true;
     }
 

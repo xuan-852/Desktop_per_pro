@@ -98,6 +98,7 @@ public class PerformanceMonitor : MonoBehaviour
     private System.IntPtr _nvmlDevice = System.IntPtr.Zero;
     private bool _nvmlInitialized = false;
     private bool _nvmlAttempted = false;
+    private float _nvmlRetryCooldown = 0f;     // 休眠恢复后冷却重试
 
     void Start()
     {
@@ -253,10 +254,22 @@ public class PerformanceMonitor : MonoBehaviour
             catch { }
         }
         if (!_nvmlInitialized || _nvmlDevice == System.IntPtr.Zero) return -1f;
+        // 休眠恢复后冷却期内不查，避免打在失效句柄上导致显卡驱动崩溃
+        if (_nvmlRetryCooldown > 0f)
+        {
+            _nvmlRetryCooldown -= LOAD_POLL_INTERVAL;
+            return -1f;
+        }
         try
         {
             int ret = NVML.nvmlDeviceGetUtilizationRates(_nvmlDevice, out NVML.nvmlUtilization_t util);
             if (ret == NVML.NVML_SUCCESS) return Mathf.Clamp(util.gpuUtil, 0, 100);
+            // 句柄失效（休眠/驱动重置后）→ 冷却 60s 后重试初始化
+            Debug.LogWarning("[PerformanceMonitor] NVML 查询失败，驱动可能已重置，进入冷却重试");
+            _nvmlInitialized = false;
+            _nvmlAttempted = false;
+            _nvmlDevice = System.IntPtr.Zero;
+            _nvmlRetryCooldown = 60f;
         }
         catch { }
         return -1f;

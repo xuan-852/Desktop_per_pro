@@ -108,15 +108,9 @@ public class ToolCallInvoker : MonoBehaviour
             return $"✅ 穷观阵已推演「{query}」，结果自现";
         };
 
-        // ——— 4. 法眼摄形：截图保存到桌面 ———
-        _executors["take_screenshot"] = args =>
-        {
-            string path = SaveScreenshot();
-            if (path != null)
-                return $"✅ 法眼已摄形！存于「{path}」";
-            else
-                return "❌ 摄形失败…";
-        };
+        // ——— 4. 法眼摄形+洞观：截图后经 GLM 视觉分析（协程实现） ———
+        // 注：实际实现在 RegisterCoroutineTools 中，此处占位以防同步调用报错
+        _executors["take_screenshot"] = args => "⏳ 法眼摄形中，请稍候……";
 
         // ——— 5. 气运探查：系统信息 ———
         _executors["get_system_info"] = args =>
@@ -655,7 +649,7 @@ public class ToolCallInvoker : MonoBehaviour
     ""type"": ""function"",
     ""function"": {
       ""name"": ""take_screenshot"",
-      ""description"": ""截取当前屏幕并保存到桌面。用户说「截图」「看一下我屏幕」时调用。调用后告诉用户截图已保存"",
+      ""description"": ""截取当前屏幕并分析画面内容（自动调用 GLM 视觉模型）。用户说「截图」「看一下我屏幕」「屏幕上有什么」「看看我在干什么」时调用。调用后返回对屏幕内容的详细文字描述而非文件路径。"",
       ""parameters"": {
         ""type"": ""object"",
         ""properties"": {}
@@ -990,6 +984,7 @@ public class ToolCallInvoker : MonoBehaviour
     {
         _coroutineExecutors = new Dictionary<string, Func<string, IEnumerator>>
         {
+            ["take_screenshot"]   = args => TakeScreenshotAndAnalyze(),
             ["query_exams"]       = args => RunAsyncTool(() => FindObjectOfType<ServerPollService>()?.QueryUpcomingExamsAsync() ?? Task.FromResult("❌ 课表传讯服务未就绪")),
             ["query_scores"]      = args => RunAsyncTool(() => FindObjectOfType<ServerPollService>()?.QueryScoresAsync() ?? Task.FromResult("❌ 课表传讯服务未就绪")),
             ["query_schedule"]    = args => RunAsyncTool(() =>
@@ -1001,6 +996,161 @@ public class ToolCallInvoker : MonoBehaviour
             ["query_user_status"] = args => RunAsyncTool(() => FindObjectOfType<ServerPollService>()?.QueryUserStatusAsync() ?? Task.FromResult("❌ 课表传讯服务未就绪")),
             ["search_files"]      = args => RunAsyncTool(() => SearchFilesTask(args)),
         };
+    }
+
+    // ================================================================
+    //  法眼摄形 + GLM 视觉分析（静默后台进行）
+    // ================================================================
+
+    private IEnumerator TakeScreenshotAndAnalyze()
+    {
+        _coroutineResult = null;
+
+        // ——— 1. 截图（静默保存到临时目录） ———
+        string screenshotPath = SaveScreenshotTemp();
+        if (screenshotPath == null || !File.Exists(screenshotPath))
+        {
+            _coroutineResult = "❌ 摄形失败，无法窥视凡间";
+            yield break;
+        }
+
+        // ——— 2. 读取图片 → base64（读取后立即删除临时文件，不留痕迹） ———
+        byte[] imageBytes = null;
+        try
+        {
+            imageBytes = File.ReadAllBytes(screenshotPath);
+        }
+        catch (Exception e)
+        {
+            UnityEngine.Debug.LogWarning($"[ToolCallInvoker] 读图失败: {e.Message}");
+            _coroutineResult = "❌ 法眼虽摄形，但无法解读天书";
+            yield break;
+        }
+        finally
+        {
+            // 静默清理临时截图
+            try { if (File.Exists(screenshotPath)) File.Delete(screenshotPath); } catch { }
+        }
+
+        string base64 = Convert.ToBase64String(imageBytes);
+        string dataUrl = "data:image/png;base64," + base64;
+
+        // ——— 3. 构建 GLM 视觉请求 ———
+        string requestId = Guid.NewGuid().ToString("N");
+        string prompt = "请详细描述这张电脑屏幕截图中的全部内容，包括：有哪些窗口/程序在运行、界面上有什么文字和按钮、任务栏图标、桌面图标等所有可见信息。按区域依次描述。";
+
+        string jsonBody = "{";
+        jsonBody += "\"model\":\"" + EscapeJsonStr(ChatConfig.GlmVisionModel) + "\",";
+        jsonBody += "\"messages\":[{";
+        jsonBody += "\"role\":\"user\",";
+        jsonBody += "\"content\":[";
+        jsonBody += "{\"type\":\"text\",\"text\":\"" + EscapeJsonStr(prompt) + "\"},";
+        jsonBody += "{\"type\":\"image_url\",\"image_url\":{\"url\":\"" + EscapeJsonStr(dataUrl) + "\"}}";
+        jsonBody += "]";
+        jsonBody += "}],";
+        jsonBody += "\"request_id\":\"" + requestId + "\"";
+        jsonBody += "}";
+
+        // ——— 4. 发送请求 ———
+        string fullUrl = ChatConfig.GlmApiBaseUrl.TrimEnd('/') + "/chat/completions";
+        string responseText = null;
+
+        using (UnityWebRequest req = new UnityWebRequest(fullUrl, "POST"))
+        {
+            byte[] bodyBytes = Encoding.UTF8.GetBytes(jsonBody);
+            req.uploadHandler = new UploadHandlerRaw(bodyBytes);
+            req.downloadHandler = new DownloadHandlerBuffer();
+            req.SetRequestHeader("Content-Type", "application/json");
+            req.SetRequestHeader("Authorization", "Bearer " + ChatConfig.GlmApiKey);
+            req.timeout = 60; // 视觉模型可能需要更长时间
+
+            yield return req.SendWebRequest();
+
+            if (req.result == UnityWebRequest.Result.Success)
+            {
+                responseText = req.downloadHandler.text;
+            }
+            else
+            {
+                string errBody = req.downloadHandler?.text ?? "";
+                string errMsg = req.error;
+                if (!string.IsNullOrEmpty(errBody) && errBody.Contains("\"message\""))
+                {
+                    try
+                    {
+                        var errObj = UnityEngine.JsonUtility.FromJson<GlmErrorResponse>(errBody);
+                        if (errObj != null && !string.IsNullOrEmpty(errObj.error.message))
+                            errMsg = errObj.error.message;
+                    }
+                    catch { }
+                }
+                UnityEngine.Debug.LogWarning($"[ToolCallInvoker] GLM 视觉分析失败: {errMsg}");
+                _coroutineResult = "❌ 法眼窥视天机受阻：" + errMsg;
+                yield break;
+            }
+        }
+
+        // ——— 5. 解析结果 ———
+        try
+        {
+            var resp = UnityEngine.JsonUtility.FromJson<GlmVisionResponse>(responseText);
+            if (resp != null && resp.choices != null && resp.choices.Length > 0
+                && resp.choices[0].message != null)
+            {
+                string analysis = resp.choices[0].message.content;
+                if (!string.IsNullOrEmpty(analysis))
+                {
+                    // 静默后台：不提及截图文件路径，只返回分析结果
+                    _coroutineResult = "👁️ 法眼洞观：\n" + analysis.Trim();
+                    yield break;
+                }
+            }
+            _coroutineResult = "❌ 法眼所见无法解读（API 返回格式异常）";
+        }
+        catch (Exception e)
+        {
+            UnityEngine.Debug.LogWarning($"[ToolCallInvoker] GLM 响应解析失败: {e.Message}");
+            _coroutineResult = "❌ 法眼所见无法解读";
+        }
+    }
+
+    // ---- GLM 响应模型 ----
+
+    [System.Serializable]
+    private class GlmVisionResponse
+    {
+        public GlmChoice[] choices;
+    }
+
+    [System.Serializable]
+    private class GlmChoice
+    {
+        public GlmMessage message;
+    }
+
+    [System.Serializable]
+    private class GlmMessage
+    {
+        public string content;
+    }
+
+    [System.Serializable]
+    private class GlmErrorResponse
+    {
+        public GlmErrorDetail error;
+    }
+
+    [System.Serializable]
+    private class GlmErrorDetail
+    {
+        public string message;
+    }
+
+    /// <summary>JSON 字符串转义（仅用于手拼 JSON 时的值）</summary>
+    private static string EscapeJsonStr(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r").Replace("\t", "\\t");
     }
 
     /// <summary>判断工具是否应走协程执行</summary>
@@ -1259,6 +1409,50 @@ $bmp.Dispose()
         catch (Exception e)
         {
             UnityEngine.Debug.LogWarning($"[ToolCallInvoker] 截图失败: {e.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>静默截图到临时目录（不留痕迹，供 GLM 分析用）</summary>
+    private static string SaveScreenshotTemp()
+    {
+        try
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "DesktopPet");
+            if (!Directory.Exists(tempDir)) Directory.CreateDirectory(tempDir);
+            string filename = $"screen_{DateTime.Now:yyyyMMdd_HHmmss}.png";
+            string path = Path.Combine(tempDir, filename);
+
+#if !UNITY_EDITOR
+            string psScript = $@"
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+$bmp = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+$g = [System.Drawing.Graphics]::FromImage($bmp)
+$g.CopyFromScreen($screen.Left, $screen.Top, 0, 0, $bmp.Size)
+$bmp.Save('{path.Replace("'", "''")}', [System.Drawing.Imaging.ImageFormat]::Png)
+$g.Dispose()
+$bmp.Dispose()
+";
+            var psi = new ProcessStartInfo("powershell", $"-NoProfile -Command \"{psScript.Replace("\"", "\\\"")}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true
+            };
+            var p = Process.Start(psi);
+            if (p != null && !p.WaitForExit(5000))
+            {
+                try { p.Kill(); } catch { }
+            }
+            if (File.Exists(path)) return path;
+#endif
+            return path;
+        }
+        catch (Exception e)
+        {
+            UnityEngine.Debug.LogWarning($"[ToolCallInvoker] 静默截图失败: {e.Message}");
             return null;
         }
     }

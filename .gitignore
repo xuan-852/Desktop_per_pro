@@ -23,6 +23,17 @@ code/desktop_unity/Assets/Scripts/ChatConfig.cs
 code/desktop_unity/Assets/Scripts/ChatConfig.cs.meta
 "code/desktop unity/Assets/Scripts/ChatConfig.cs"
 "code/desktop unity/Assets/Scripts/ChatConfig.cs.meta"
+code/desktop_unity/.codely-cli/
+code/desktop_unity/.codely/
+code/desktop_unity/.codelyignore
+code/desktop_unity/.com-unity-codely.json
+code/desktop_unity/.sln
+code/desktop_unity/*.csproj
+code/desktop_unity/*.sln
+code/desktop_unity/screenshots/
+code/desktop_unity/desktop_pet_magic_circle_params_v2.txt
+code/desktop_unity/.codely-cli.bak/
+code/desktop_unity/.vscode/
 
 # ================
 # 构建辅助

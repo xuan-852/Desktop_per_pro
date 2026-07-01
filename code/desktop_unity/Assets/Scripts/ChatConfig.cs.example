@@ -4,6 +4,17 @@
 /// </summary>
 public static class ChatConfig
 {
-    /// <summary>你的 API Key（如 DeepSeek / OpenAI / 其他兼容 API）</summary>
+    /// <summary>DeepSeek API Key</summary>
     public const string ApiKey = "";
+
+    // ========== GLM (智谱) 视觉模型配置 ==========
+
+    /// <summary>GLM API Key（用于屏幕截图分析）</summary>
+    public const string GlmApiKey = "";
+
+    /// <summary>GLM API 基础地址</summary>
+    public const string GlmApiBaseUrl = "https://open.bigmodel.cn/api/paas/v4";
+
+    /// <summary>GLM 视觉模型名</summary>
+    public const string GlmVisionModel = "glm-4v-flash";
 }

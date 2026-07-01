@@ -172,6 +172,7 @@ public class DesktopPet : MonoBehaviour
     private float _sysMemWarnCooldown = 0f;       // 防刷屏冷却
     private float _cleanupTimer = 0f;
     private const float CLEANUP_INTERVAL = 600f;  // 每10分钟清理一次旧日志
+    private const long PLAYER_LOG_MAX_BYTES = 2L * 1024L * 1024L; // Player.log 超过 2MB 自动删除重开
 
     /// <summary>监听 Unity 日志，捕获崩溃前最后一刻的痕迹</summary>
     private void CaptureCrashLog(string logString, string stackTrace, LogType type)
@@ -299,6 +300,18 @@ public class DesktopPet : MonoBehaviour
                     Debug.Log($"[DesktopPet] 已删除过期日志: {fi.Name}");
                 }
             }
+
+            // 3) Player.log 超过 2MB 时删除重建（Unity 会自动重建）
+            string playerLogPath = System.IO.Path.Combine(
+                System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData),
+                "Low", "DefaultCompany", "desktop pet", "Player.log");
+            var playerLogInfo = new System.IO.FileInfo(playerLogPath);
+            if (playerLogInfo.Exists && playerLogInfo.Length > PLAYER_LOG_MAX_BYTES)
+            {
+                // 先备份文件名，删除当前日志文件
+                System.IO.File.Delete(playerLogPath);
+                Debug.Log($"[DesktopPet] Player.log 超过 2MB，已删除释放空间");
+            }
         }
         catch (System.Exception ex)
         {
@@ -358,6 +371,26 @@ public class DesktopPet : MonoBehaviour
 
     private void Start()
     {
+        // ---- 启动时清理上次 Player.log（防止旧日志堆积）----
+#if !UNITY_EDITOR
+        try
+        {
+            string playerLogPath = System.IO.Path.Combine(
+                System.Environment.GetFolderPath(System.Environment.SpecialFolder.LocalApplicationData),
+                "Low", "DefaultCompany", "desktop pet", "Player.log");
+            var fi = new System.IO.FileInfo(playerLogPath);
+            if (fi.Exists)
+            {
+                fi.Delete();
+                Debug.Log("[DesktopPet] 启动时已重置 Player.log，释放磁盘空间");
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogWarning($"[DesktopPet] 启动重置 Player.log 失败（无害）: {ex.Message}");
+        }
+#endif
+
         // ---- 智能性能监控（根据系统负载自适应帧率/分辨率）----
         _perfMonitor = GetComponent<PerformanceMonitor>();
         if (_perfMonitor == null)
